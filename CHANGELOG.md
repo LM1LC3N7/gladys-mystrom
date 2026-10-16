@@ -10,6 +10,8 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-16
+
 ### Added
 
 - myStrom devices over their local REST API, without the cloud: added by IP
@@ -33,4 +35,5 @@ the notes of the version's GitHub Release.
   measurements spaced by a minute, the switches, lights, motion and presses
   first.
 
-[Unreleased]: https://github.com/LM1LC3N7/gladys-mystrom/commits/main
+[Unreleased]: https://github.com/LM1LC3N7/gladys-mystrom/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/LM1LC3N7/gladys-mystrom/releases/tag/v0.1.1
