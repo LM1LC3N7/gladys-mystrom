@@ -63,10 +63,17 @@ test('errors: unreachable, 401, HTTP error, timeout, huge answer', async () => {
   await assert.rejects(client.report('10.0.0.4'), { kind: 'invalid' });
   const slow = new MyStromClient({
     timeout: 20,
+    // AbortSignal.timeout() uses an unref'd timer: a real request keeps the
+    // event loop alive with its socket, this fake one with a timer of its own
+    // (without it, Node 22 ends the test file while the promise is pending).
     fetchImpl: (url, { signal }) =>
-      new Promise((resolve, reject) =>
-        signal.addEventListener('abort', () => reject(signal.reason)),
-      ),
+      new Promise((resolve, reject) => {
+        const socketLike = setTimeout(() => {}, 5000);
+        signal.addEventListener('abort', () => {
+          clearTimeout(socketLike);
+          reject(signal.reason);
+        });
+      }),
   });
   await assert.rejects(slow.report('10.0.0.5'), { kind: 'timeout' });
 });
