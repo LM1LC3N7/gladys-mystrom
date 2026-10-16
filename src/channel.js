@@ -5,23 +5,38 @@
 // port is not published: only the main container reaches it.
 //
 // - the receiver runs the server: it keeps what the buttons sent while the
-//   main container is away (a bounded queue) and streams it once a client says
-//   hello with the token both got from the main container;
-// - the main container runs the client: it reconnects by itself.
+//   main container is away (a bounded queue) and streams it once a client has
+//   proved it knows the channel secret;
+// - the main container runs the client: it reconnects by itself, and accepts
+//   nothing before the server has proved it knows the secret too.
+//
+// Mutual challenge-response, the secret never on the wire:
+//   server -> { type: 'challenge', nonce: Ns }
+//   client -> { type: 'hello', nonce: Nc, proof: HMAC(secret, 'client|Ns|Nc') }
+//   server -> { type: 'ready', proof: HMAC(secret, 'server|Nc|Ns'), queued, dropped }
+// Fresh nonces on both sides: a recorded exchange cannot be replayed.
 //
 // Sub-containers get no Gladys credentials: the receiver only ever talks to
-// the buttons and to this channel. Taken from LM1LC3N7/gladys-ajax (same
+// the buttons and to this channel. Adapted from LM1LC3N7/gladys-ajax (same
 // author, Apache-2.0).
 // -----------------------------------------------------------------------------
 
 import { EventEmitter } from 'node:events';
 import { createConnection, createServer } from 'node:net';
-import { timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 
 export const CHANNEL_PORT = 7778;
 const MAX_LINE = 64 * 1024;
+const NONCE = /^[0-9a-f]{32}$/;
 
-const sameToken = (a, b) => {
+const nonce = () => randomBytes(16).toString('hex');
+
+export const proof = (secret, role, first, second) =>
+  createHmac('sha256', String(secret ?? ''))
+    .update(`${role}|${first}|${second}`)
+    .digest('hex');
+
+const sameProof = (a, b) => {
   const left = Buffer.from(String(a ?? ''));
   const right = Buffer.from(String(b ?? ''));
   return left.length === right.length && left.length > 0 && timingSafeEqual(left, right);
@@ -46,6 +61,7 @@ function onJsonLines(socket, handler) {
         return;
       }
       handler(object);
+      if (socket.destroyed) return;
     }
     if (buffer.length > MAX_LINE) {
       socket.destroy();
@@ -69,8 +85,9 @@ export function createChannelServer({
   let client;
   let server;
   let dropped = 0;
+  const secret = String(token ?? '');
 
-  const write = (object) => client?.write(`${JSON.stringify(object)}\n`);
+  const write = (socket, object) => socket?.write(`${JSON.stringify(object)}\n`);
 
   const channel = {
     get port() {
@@ -82,7 +99,7 @@ export function createChannelServer({
     /** Sends now, or queues while no client is connected (unless `queue` is false). */
     send(object, { queue: keep = true } = {}) {
       if (client) {
-        write(object);
+        write(client, object);
         return;
       }
       if (!keep) return;
@@ -96,21 +113,34 @@ export function createChannelServer({
       return new Promise((resolve, reject) => {
         server = createServer((socket) => {
           socket.setKeepAlive(true, 30_000);
-          let authenticated = false;
-          const timer = setTimeout(() => authenticated || socket.destroy(), 10_000);
+          let state = 'challenged';
+          const serverNonce = nonce();
+          const timer = setTimeout(() => state === 'ready' || socket.destroy(), 10_000);
+          write(socket, { type: 'challenge', nonce: serverNonce });
           onJsonLines(socket, (object) => {
-            if (authenticated) return; // the main container never sends anything else
-            if (object?.type !== 'hello' || !sameToken(object.token, token)) {
-              logger?.warn('Channel: refused a client without the right token');
+            if (state === 'ready') return; // the main container sends nothing else
+            const valid =
+              secret !== '' &&
+              object?.type === 'hello' &&
+              NONCE.test(String(object.nonce ?? '')) &&
+              sameProof(object.proof, proof(secret, 'client', serverNonce, object.nonce));
+            if (!valid) {
+              logger?.warn('Channel: refused a client that does not know the secret');
               socket.destroy();
               return;
             }
-            authenticated = true;
+            state = 'ready';
             clearTimeout(timer);
             if (client && client !== socket) client.destroy();
             client = socket;
-            write({ type: 'ready', queued: queue.length, dropped, ...hello() });
-            while (queue.length > 0) write(queue.shift());
+            write(socket, {
+              type: 'ready',
+              proof: proof(secret, 'server', object.nonce, serverNonce),
+              queued: queue.length,
+              dropped,
+              ...hello(),
+            });
+            while (queue.length > 0) write(socket, queue.shift());
             dropped = 0;
             logger?.info('Channel: main container connected');
           });
@@ -153,7 +183,7 @@ export class ChannelClient extends EventEmitter {
     super();
     this.host = host;
     this.port = port;
-    this.token = token;
+    this.secret = String(token ?? '');
     this.logger = logger;
     this.delays = delays;
     this.attempt = 0;
@@ -179,14 +209,42 @@ export class ChannelClient extends EventEmitter {
     const socket = createConnection({ host: this.host, port: this.port });
     this.socket = socket;
     socket.setKeepAlive(true, 30_000);
-    socket.on('connect', () => {
-      socket.write(`${JSON.stringify({ type: 'hello', token: this.token })}\n`);
-    });
+    let state = 'waiting';
+    let clientNonce;
+    let serverNonce;
     onJsonLines(socket, (object) => {
-      if (object?.type === 'ready' && !this.connected) {
+      if (state === 'waiting') {
+        if (object?.type !== 'challenge' || !NONCE.test(String(object.nonce ?? ''))) {
+          socket.destroy();
+          return;
+        }
+        serverNonce = object.nonce;
+        clientNonce = nonce();
+        state = 'hello';
+        socket.write(
+          `${JSON.stringify({
+            type: 'hello',
+            nonce: clientNonce,
+            proof: proof(this.secret, 'client', serverNonce, clientNonce),
+          })}\n`,
+        );
+        return;
+      }
+      if (state === 'hello') {
+        // Nothing is accepted before a ready that proves the receiver knows the secret.
+        if (
+          object?.type !== 'ready' ||
+          !sameProof(object.proof, proof(this.secret, 'server', clientNonce, serverNonce))
+        ) {
+          this.logger?.warn('Channel: the receiver did not prove it knows the secret');
+          socket.destroy();
+          return;
+        }
+        state = 'ready';
         this.connected = true;
         this.attempt = 0;
-        this.emit('up', object);
+        const { proof: _proof, ...info } = object;
+        this.emit('up', info);
         return;
       }
       this.emit('message', object);

@@ -21,7 +21,7 @@ Gladys ⇄ SDK ⇄ src/handlers.js ⇄ src/app.js (MyStromApp)
                                    ├─ src/mystrom/light.js    hsv / mono / rgb colours <-> Gladys (pure)
                                    ├─ src/model.js            known devices -> Gladys devices and values (pure)
                                    ├─ src/energy.js           energy_since_boot + boot_id -> growing kWh index (pure)
-                                   ├─ src/publisher.js        states within 300/min, measurements spaced
+                                   ├─ src/publisher.js        states within 250/min (Gladys: 300), measures spaced
                                    ├─ src/store.js            /data/mystrom.json: known devices, energy, tokens
                                    └─ src/channel.js ⇄ mystrom-buttons sub-container (src/receiver.js)
                                                          └─ src/buttons/service.js  HTTP :8080, published by Gladys
@@ -32,17 +32,29 @@ Gladys ⇄ SDK ⇄ src/handlers.js ⇄ src/app.js (MyStromApp)
   7979 (MAC, type, flags), which the integration container cannot hear on its
   bridge network. Each one is identified with `GET /api/v1/info` (`/info.json`
   on old firmware) and kept in `/data` by MAC, so a sleeping button or a new IP
-  address changes nothing. External ids: `mystrom:<MAC>`.
+  address changes nothing. External ids: `mystrom:<MAC>`. A machine that
+  announces itself is first asked without the API token; the token is only
+  sent if it answers that it wants one.
+- **The MAC is checked again** (`/api/v1/info`) when a device comes back
+  online, every 10 minutes, and before a command when the last check is
+  older: a DHCP lease that gave the address to another device marks the old
+  one unreachable and starts a new search; the status names both devices.
 - **Polling** every `poll_interval` seconds: `GET /report` (Switch),
-  `GET /api/v1/device/<MAC>` (Bulb, LED Strip), `GET /api/v1/sensors` (Motion
-  Sensor). Commands: `GET /relay?state=0|1`, `POST /api/v1/device/<MAC>` with
-  form data (`action`, `color` as `h;s;v` or `white;brightness`).
+  `GET /api/v1/device/<MAC>` (Bulb, LED Strip; only the entry of that MAC is
+  read), `GET /api/v1/sensors` (Motion Sensor). A secured device answers 404
+  without its token: read as "token missing or refused". Commands:
+  `GET /relay?state=0|1`, `POST /api/v1/device/<MAC>` with a form body whose
+  `;`, `:` and `/` stay in clear (`action=on&color=120;100;50`), as the
+  firmware reads it.
 - **Buttons** call their action URLs when pressed. The main container cannot
   publish a port, so a sub-container of the same image (`node
 src/receiver.js`) serves `GET /press/<secret>/<MAC>/<press>` on a port Gladys
   publishes, and hands each press to the main container over a private TCP
-  channel (the pattern of LM1LC3N7/gladys-ajax). The "Set the button action
-  URLs" button writes these URLs into every awake button.
+  channel (the pattern of LM1LC3N7/gladys-ajax), authenticated both ways by
+  an HMAC challenge-response with a nonce on each side (the channel secret
+  never goes on the wire). The main container opens it only once Gladys shows
+  the receiver running. The "Set the button action URLs" button writes these
+  URLs into every awake button.
 
 ## Development
 
@@ -87,4 +99,5 @@ first real release.
 
 ## License
 
-Apache-2.0.
+Apache-2.0, see [LICENSE](LICENSE). Third-party notices (python-mystrom, MIT):
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

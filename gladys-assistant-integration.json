@@ -20,7 +20,7 @@
       "command": ["node", "src/receiver.js"],
       "start": "manual",
       "read_only": true,
-      "memory_mb": 64,
+      "memory_mb": 96,
       "cpu": 0.1,
       "ports": [
         {

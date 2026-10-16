@@ -54,7 +54,7 @@ export class MyStromClient {
     let body;
     if (form) {
       headers['Content-Type'] = 'application/x-www-form-urlencoded';
-      body = new URLSearchParams(form).toString();
+      body = encodeForm(form);
     }
     let response;
     try {
@@ -97,6 +97,18 @@ export class MyStromClient {
     return answer;
   }
 
+  /**
+   * A read whose path every firmware serves: a secured device answers 404
+   * (not 401) when the token is missing or wrong, as python-mystrom reads it.
+   */
+  async read(address, path, options) {
+    try {
+      return await this.json(address, path, options);
+    } catch (err) {
+      throw err.status === 404 ? tokenError() : err;
+    }
+  }
+
   /** Model, MAC and firmware; /info.json on the firmware without /api/v1/info. */
   async info(address, token) {
     try {
@@ -105,42 +117,78 @@ export class MyStromClient {
       if (err.kind !== 'http' && err.kind !== 'invalid') {
         throw err;
       }
-      return this.json(address, '/info.json', { token });
+      const first = err.status;
+      try {
+        return await this.json(address, '/info.json', { token });
+      } catch (fallback) {
+        // Both paths missing: the firmware hides them behind its token.
+        throw first === 404 && fallback.status === 404 ? tokenError() : fallback;
+      }
     }
   }
 
   /** Switch: `{ power, Ws, relay, temperature, boot_id, energy_since_boot, time_since_boot }`. */
   report(address, token) {
-    return this.json(address, '/report', { token });
+    return this.read(address, '/report', { token });
   }
 
-  setRelay(address, on, token) {
-    return this.request(address, `/relay?state=${on ? 1 : 0}`, { token });
+  async setRelay(address, on, token) {
+    try {
+      return await this.request(address, `/relay?state=${on ? 1 : 0}`, { token });
+    } catch (err) {
+      throw err.status === 404 ? tokenError() : err;
+    }
   }
 
   /** Bulb, LED strip and buttons: the entry of their MAC in `{ "<MAC>": { ... } }`. */
   async deviceState(address, mac, token) {
-    const answer = await this.json(address, `/api/v1/device/${mac}`, { token });
-    const entry = answer[mac] ?? Object.values(answer)[0];
+    const answer = await this.read(address, `/api/v1/device/${mac}`, { token });
+    // Only the entry of this MAC: another device answering at this address is not this one.
+    const entry = Object.hasOwn(answer, mac) ? answer[mac] : undefined;
     if (entry === null || typeof entry !== 'object') {
-      throw new MyStromError('unexpected answer', 'invalid');
+      throw new MyStromError(`no state for ${mac} at this address`, 'invalid');
     }
     return entry;
   }
 
   /** Bulb and LED strip commands (`action`, `color`, `ramp`), answered with the new state. */
   async setDevice(address, mac, form, token) {
-    const answer = await this.request(address, `/api/v1/device/${mac}`, {
-      method: 'POST',
-      form,
-      token,
-    });
-    const entry = answer && typeof answer === 'object' ? (answer[mac] ?? undefined) : undefined;
+    let answer;
+    try {
+      answer = await this.request(address, `/api/v1/device/${mac}`, {
+        method: 'POST',
+        form,
+        token,
+      });
+    } catch (err) {
+      throw err.status === 404 ? tokenError() : err;
+    }
+    const entry =
+      answer && typeof answer === 'object' && Object.hasOwn(answer, mac) ? answer[mac] : undefined;
     return entry && typeof entry === 'object' ? entry : undefined;
   }
 
   /** Motion Sensor: `{ motion, light, temperature }`. */
   pirSensors(address, token) {
-    return this.json(address, '/api/v1/sensors', { token });
+    return this.read(address, '/api/v1/sensors', { token });
   }
+}
+
+const tokenError = () => new MyStromError('token missing or refused (HTTP 404)', 'auth', 404);
+
+/**
+ * A form body as the myStrom firmware reads it: `k=v&…`, each part
+ * percent-encoded, then `;`, `:` and `/` put back in clear — the bulbs parse
+ * `color=120;100;50` and the buttons `single=get://host/path` literally (as
+ * python-mystrom and openHAB send them).
+ */
+export function encodeForm(form) {
+  const encode = (text) =>
+    encodeURIComponent(String(text))
+      .replace(/%3B/gi, ';')
+      .replace(/%3A/gi, ':')
+      .replace(/%2F/gi, '/');
+  return Object.entries(form)
+    .map(([key, value]) => `${encode(key)}=${encode(value)}`)
+    .join('&');
 }

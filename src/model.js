@@ -1,7 +1,8 @@
 // -----------------------------------------------------------------------------
 // myStrom devices -> Gladys devices (pure).
 //
-// A known device (see src/registry.js) becomes one Gladys device whose
+// A known device (a record of `devices` in /data, see src/store.js and the
+// "Known devices" part of src/app.js) becomes one Gladys device whose
 // external ids are built from its MAC: `gladys.externalIds('mystrom', MAC)`,
 // whatever its model, so they never change. Feature keys are frozen too.
 //
@@ -16,6 +17,7 @@ import {
   DEVICE_FEATURE_UNITS as U,
 } from '@gladysassistant/integration-sdk';
 import { BUTTON_STATUS } from './constants.js';
+import { bootIdOf } from './energy.js';
 import { MONO } from './mystrom/light.js';
 
 export const EXTERNAL_ID_TYPE = 'mystrom';
@@ -52,6 +54,7 @@ const SPECS = {
     max: 1_000_000,
     measure: true,
   },
+  // The room temperature measured by the motion sensor.
   temperature: {
     name: 'Temperature',
     category: C.TEMPERATURE_SENSOR,
@@ -59,6 +62,17 @@ const SPECS = {
     unit: U.CELSIUS,
     min: -40,
     max: 85,
+    measure: true,
+  },
+  // The temperature of a switch is read inside the plug, warmed by its load:
+  // a device temperature, kept out of the room average.
+  'switch:temperature': {
+    name: 'Device temperature',
+    category: C.DEVICE_TEMPERATURE_SENSOR,
+    type: T.SENSOR.DECIMAL,
+    unit: U.CELSIUS,
+    min: -40,
+    max: 125,
     measure: true,
   },
   light: { name: 'Light', category: C.LIGHT, type: T.LIGHT.BINARY, write: true },
@@ -143,7 +157,8 @@ export function featureKeys(record) {
   }
 }
 
-export const specOf = (key) => SPECS[key];
+/** The spec of a feature key, on a kind of device (the same key may differ by kind). */
+export const specOf = (key, kind) => SPECS[`${kind}:${key}`] ?? SPECS[key];
 
 export function deviceName(record) {
   return (record.name || `myStrom ${record.model} ${record.mac.slice(-4)}`).slice(0, 100);
@@ -153,7 +168,7 @@ export function deviceName(record) {
 export function buildDevice(gladys, record) {
   const ids = gladys.externalIds(EXTERNAL_ID_TYPE, record.mac);
   const features = featureKeys(record).map((key) => {
-    const spec = SPECS[key];
+    const spec = specOf(key, record.kind);
     const feature = {
       name: spec.name,
       external_id: ids.feature(key),
@@ -186,12 +201,24 @@ export function buildDevice(gladys, record) {
   };
 }
 
-/** What a switch's /report says it measures (fixed when the device is first seen). */
+/** What a switch's /report says it measures. */
 export function switchCaps(report) {
   return {
     power: finite(report?.power) !== undefined,
     temperature: finite(report?.temperature) !== undefined,
-    energy: finite(report?.energy_since_boot) !== undefined && Boolean(report?.boot_id),
+    energy: finite(report?.energy_since_boot) !== undefined && bootIdOf(report) !== undefined,
+  };
+}
+
+/**
+ * The capabilities only grow: a report missing a field once (a firmware
+ * hiccup) never removes a feature, and a firmware update can add one.
+ */
+export function mergeCaps(previous, next) {
+  return {
+    power: Boolean(previous?.power || next?.power),
+    temperature: Boolean(previous?.temperature || next?.temperature),
+    energy: Boolean(previous?.energy || next?.energy),
   };
 }
 

@@ -16,6 +16,7 @@ import {
   EXTERNAL_ID_TYPE,
   buildDevice,
   featureKeys,
+  mergeCaps,
   readValues,
   specOf,
   switchCaps,
@@ -27,9 +28,24 @@ import { StatePublisher } from './publisher.js';
 import { FileStore, emptyData } from './store.js';
 
 const hash = (object) => createHash('sha256').update(JSON.stringify(object)).digest('hex');
-const token = () => randomBytes(24).toString('base64url');
+const secret = () => randomBytes(24).toString('base64url');
 /** A press kept by the receiver while this container was away: no scene past this age. */
 const STALE_PRESS = 60_000;
+
+/** Runs `task` over `items`, `limit` at a time, in order. */
+async function mapLimit(items, limit, task) {
+  const results = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const index = next;
+      next += 1;
+      results[index] = await task(items[index]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
 
 export class MyStromApp {
   constructor({
@@ -63,6 +79,10 @@ export class MyStromApp {
     this.probes = new Map();
     /** mac -> reachable */
     this.reachable = new Map();
+    /** mac -> when the MAC answering at its address was last checked */
+    this.verified = new Map();
+    /** address -> [previous MAC, new MAC]: two devices seen at one address */
+    this.conflicts = new Map();
     /** deviceId -> transport badge last published */
     this.transports = new Map();
     /** mac -> last parsed light state (the base of the next colour command) */
@@ -74,6 +94,9 @@ export class MyStromApp {
     this.features = new Map();
     this.eventWindow = [];
     this.polling = undefined;
+    this.discovering = undefined;
+    this.lastSearch = -Infinity;
+    this.lastReceiverTry = -Infinity;
     this.pollTimer = undefined;
     this.persistTimer = undefined;
     this.channel = undefined;
@@ -87,8 +110,8 @@ export class MyStromApp {
   async start(raw = {}) {
     if (!this.data) {
       this.data = await this.store.load().catch(() => emptyData());
-      this.data.tokens.button ||= token();
-      this.data.tokens.channel ||= token();
+      this.data.tokens.button ||= secret();
+      this.data.tokens.channel ||= secret();
       this.persist();
     }
     const previous = this.config;
@@ -126,12 +149,21 @@ export class MyStromApp {
 
   schedule() {
     this.timers.clearInterval(this.pollTimer);
-    this.pollTimer = this.timers.setInterval(() => {
-      this.poll()
-        .then((changed) => (changed ? this.publishDevices() : undefined))
-        .then(() => this.updateStatus())
-        .catch((err) => this.logger.warn(`Polling failed: ${err.message}`));
-    }, this.config.pollInterval * 1000);
+    this.pollTimer = this.timers.setInterval(() => this.tick(), this.config.pollInterval * 1000);
+  }
+
+  /** One timer round: polling, and the receiver channel when it is not open yet. */
+  tick() {
+    return this.poll()
+      .then((changed) => (changed ? this.publishDevices() : undefined))
+      .then(() => {
+        if (!this.channel && this.now() - this.lastReceiverTry >= TIMINGS.probeRetry) {
+          return this.startReceiver();
+        }
+        return undefined;
+      })
+      .then(() => this.updateStatus())
+      .catch((err) => this.logger.warn(`Polling failed: ${err.message}`));
   }
 
   persist() {
@@ -167,6 +199,20 @@ export class MyStromApp {
       this.warnOnce('devices', `More than ${LIMITS.devices} devices: the next ones are ignored`);
       return false;
     }
+    let changed = false;
+    // One address, one device: another device known at this address has moved.
+    for (const other of this.records) {
+      if (other.mac !== identity.mac && other.address === address) {
+        this.logger.warn(
+          `Two devices at ${address}: ${other.mac} was known there, ${identity.mac} answers now`,
+        );
+        this.conflicts.set(address, [other.mac, identity.mac]);
+        other.address = '';
+        this.setReachable(other, false, 'moved');
+        this.requestSearch();
+        changed = true;
+      }
+    }
     const record = {
       ...existing,
       mac: identity.mac,
@@ -179,23 +225,44 @@ export class MyStromApp {
       address,
       ...extra,
     };
-    const changed = JSON.stringify(existing) !== JSON.stringify(record);
-    if (changed) {
+    if (JSON.stringify(existing) !== JSON.stringify(record)) {
       devices[identity.mac] = record;
-      this.persist();
+      changed = true;
       if (existing && existing.address !== address) {
         this.logger.info(`${identity.model} ${identity.mac} is now at ${address}`);
+        for (const [conflict, macs] of this.conflicts) {
+          if (macs[0] === identity.mac) {
+            this.conflicts.delete(conflict);
+          }
+        }
       }
     }
+    if (changed) {
+      this.persist();
+    }
+    this.verified.set(identity.mac, this.now());
     return changed;
   }
 
-  /** Asks a typed or found address what it is. */
-  async probe(address) {
+  /**
+   * Asks an address what it is. A device found by its announcement is first
+   * asked without the token: the token only goes to a machine that wants it.
+   */
+  async probe(address, { announced = false } = {}) {
     const status = { lastTry: this.now() };
     this.probes.set(address, status);
     try {
-      const info = await this.client.info(address, this.config.token);
+      let token = announced ? '' : this.config.token;
+      let info;
+      try {
+        info = await this.client.info(address, token);
+      } catch (err) {
+        if (!(announced && err.kind === 'auth' && this.config.token)) {
+          throw err;
+        }
+        token = this.config.token;
+        info = await this.client.info(address, token);
+      }
       const identity = parseInfo(info);
       if (!identity) {
         status.error = 'unknown';
@@ -205,7 +272,8 @@ export class MyStromApp {
       status.mac = identity.mac;
       const extra = {};
       if (identity.kind === 'switch') {
-        extra.caps = switchCaps(await this.client.report(address, this.config.token));
+        const report = await this.client.report(address, token);
+        extra.caps = mergeCaps(this.data.devices[identity.mac]?.caps, switchCaps(report));
       }
       return { changed: this.remember(identity, address, extra), identity };
     } catch (err) {
@@ -213,6 +281,54 @@ export class MyStromApp {
       this.logger.debug(`${address}: ${err.message}`);
       return { changed: false, error: err };
     }
+  }
+
+  /**
+   * Checks that the device answering at a known address is still this one
+   * (a DHCP lease may give the address to another device). False when it is
+   * not: the device waits to be found again.
+   */
+  async verify(record) {
+    const identity = parseInfo(await this.client.info(record.address, this.config.token));
+    if (identity?.mac === record.mac) {
+      this.verified.set(record.mac, this.now());
+      return true;
+    }
+    const address = record.address;
+    this.logger.warn(
+      `${address} no longer answers as ${record.model} ${record.mac}` +
+        (identity ? ` but as ${identity.model} ${identity.mac}` : '') +
+        ': searching it again',
+    );
+    if (identity) {
+      // remember() frees the address and starts the search.
+      this.remember(identity, address);
+    } else {
+      record.address = '';
+      this.setReachable(record, false, 'moved');
+      this.requestSearch();
+    }
+    this.persist();
+    return false;
+  }
+
+  needsVerify(record) {
+    const last = this.verified.get(record.mac);
+    return (
+      last === undefined ||
+      this.reachable.get(record.mac) === false ||
+      this.now() - last >= TIMINGS.verifyInterval
+    );
+  }
+
+  /** A search of the announcements, at most once a minute, for a device that moved. */
+  requestSearch() {
+    if (this.discovering || this.now() - this.lastSearch < TIMINGS.probeRetry) {
+      return;
+    }
+    this.discover()
+      .then(() => this.updateStatus())
+      .catch((err) => this.logger.debug(`Search failed: ${err.message}`));
   }
 
   /** One polling round: the new addresses, then every known device. */
@@ -238,16 +354,22 @@ export class MyStromApp {
     for (const result of await Promise.all(due.map((address) => this.probe(address)))) {
       changed ||= result.changed;
     }
-    const polled = this.records.filter((record) => record.kind !== 'button');
+    const polled = this.records.filter((record) => record.kind !== 'button' && record.address);
+    const before = JSON.stringify(this.records.map((record) => [record.mac, record.address]));
     await Promise.all(polled.map((record) => this.read(record)));
+    changed ||= before !== JSON.stringify(this.records.map((r) => [r.mac, r.address]));
     return changed;
   }
 
   /** Reads one device and records its values. */
   async read(record) {
-    const { address, mac } = record;
+    const { mac } = record;
     const token = this.config.token;
     try {
+      if (this.needsVerify(record) && !(await this.verify(record))) {
+        return;
+      }
+      const { address } = record;
       let reading;
       if (record.kind === 'switch') {
         const report = await this.client.report(address, token);
@@ -270,9 +392,9 @@ export class MyStromApp {
       this.setReachable(record, true);
     } catch (err) {
       if (err.kind === 'auth') {
-        this.warnOnce(`auth:${mac}`, `${record.model} ${mac} (${address}) refused the token`);
+        this.warnOnce(`auth:${mac}`, `${record.model} ${mac} (${record.address}): ${err.message}`);
       }
-      this.logger.debug(`${record.model} ${mac} (${address}): ${err.message}`);
+      this.logger.debug(`${record.model} ${mac} (${record.address}): ${err.message}`);
       this.setReachable(record, false, err.kind);
     }
   }
@@ -313,11 +435,12 @@ export class MyStromApp {
       const ids = this.gladys.externalIds(EXTERNAL_ID_TYPE, record.mac);
       for (const key of featureKeys(record)) {
         const featureId = ids.feature(key);
+        const spec = specOf(key, record.kind);
         this.features.set(featureId, { mac: record.mac, key });
-        if (specOf(key).measure) {
+        if (spec.measure) {
           measures.add(featureId);
         }
-        if (specOf(key).event) {
+        if (spec.event) {
           events.add(featureId);
         }
       }
@@ -449,6 +572,13 @@ export class MyStromApp {
     if (unknown.length > 0) {
       parts.push(T.notMyStrom(unknown));
     }
+    for (const [address, [previous, next]] of this.conflicts) {
+      parts.push(T.sameAddress(address, previous, next));
+    }
+    const lost = polled.filter((record) => !record.address && !this.isConflicted(record.mac));
+    if (lost.length > 0) {
+      parts.push(T.lost(lost.map((record) => record.mac)));
+    }
     const message = {
       en: parts.map((p) => p.en).join(' '),
       fr: parts.map((p) => p.fr).join(' '),
@@ -463,6 +593,10 @@ export class MyStromApp {
       .catch((err) => this.logger.warn(`setConnectionStatus failed: ${err.message}`));
   }
 
+  isConflicted(mac) {
+    return [...this.conflicts.values()].some(([previous]) => previous === mac);
+  }
+
   // --- Commands --------------------------------------------------------------
 
   async setValue(device, feature, value) {
@@ -472,12 +606,16 @@ export class MyStromApp {
       target = this.features.get(feature.external_id);
     }
     const record = target && this.data.devices[target.mac];
-    if (!record || !specOf(target.key)?.write) {
+    if (!record || !specOf(target.key, record.kind)?.write) {
       throw new Error(`${feature.name ?? feature.external_id} cannot be controlled`);
     }
     const number = Number(value);
     if (!Number.isFinite(number)) {
       throw new Error(`Invalid value ${value}`);
+    }
+    // Never command another device that took over the address.
+    if (!record.address || (this.needsVerify(record) && !(await this.verify(record)))) {
+      throw new Error(`${record.model} ${record.mac} is not at its address any more`);
     }
     if (record.kind === 'switch') {
       await this.client.setRelay(record.address, number > 0, this.config.token);
@@ -521,17 +659,22 @@ export class MyStromApp {
 
   // --- Buttons -----------------------------------------------------------------
 
-  /** The receiver runs once a button is known (it costs nothing to the others). */
+  /**
+   * The receiver runs once a button is known (it costs nothing to the others);
+   * the channel opens only once Gladys says the receiver is running.
+   */
   async startReceiver() {
-    if (!this.records.some((record) => record.kind === 'button')) {
+    if (this.channel || !this.records.some((record) => record.kind === 'button')) {
       return;
     }
+    this.lastReceiverTry = this.now();
     try {
-      await this.ensureReceiver();
+      if ((await this.ensureReceiver())?.status === 'running') {
+        this.startChannel();
+      }
     } catch {
-      // Logged; the channel still waits for a receiver started later.
+      // Logged; tried again at a later polling round.
     }
-    this.startChannel();
   }
 
   receiverEnv() {
@@ -544,13 +687,20 @@ export class MyStromApp {
     };
   }
 
-  /** Starts (or recreates) the receiver when it is not running with the current environment. */
+  async receiverContainer() {
+    const containers = await this.gladys.getContainers();
+    return containers.find((container) => container.name === RECEIVER.name);
+  }
+
+  /**
+   * Starts (or recreates) the receiver when it is not running with the
+   * current environment; resolves the container as Gladys then shows it.
+   */
   async ensureReceiver() {
     const env = this.receiverEnv();
     const envHash = hash(env);
     try {
-      const containers = await this.gladys.getContainers();
-      const current = containers.find((container) => container.name === RECEIVER.name);
+      const current = await this.receiverContainer();
       if (current?.status === 'running' && this.data.receiverEnvHash === envHash) {
         return current;
       }
@@ -558,7 +708,7 @@ export class MyStromApp {
       this.data.receiverEnvHash = envHash;
       this.persist();
       this.logger.info('Button receiver started');
-      return current;
+      return await this.receiverContainer();
     } catch (err) {
       this.logger.error('Could not start the button receiver container', err);
       throw err;
@@ -616,28 +766,45 @@ export class MyStromApp {
 
   // --- Configuration screen buttons ------------------------------------------
 
-  /** The UDP announcements captured by the core, each device asked what it is. */
-  async discover() {
+  /** The UDP announcements captured by the core, one search at a time. */
+  discover() {
+    if (!this.discovering) {
+      this.lastSearch = this.now();
+      this.discovering = this.doDiscover().finally(() => {
+        this.discovering = undefined;
+      });
+    }
+    return this.discovering;
+  }
+
+  async doDiscover() {
     const results = await this.gladys.scanNetwork('udp-broadcast', {
       timeoutSeconds: TIMINGS.scanSeconds,
     });
+    const announced = parseAnnouncements(results);
+    const answers = await mapLimit(announced, TIMINGS.probeConcurrency, async (device) => {
+      const address = urlHost(device.ip);
+      const result = await this.probe(address, { announced: true });
+      return { device, address, ...result };
+    });
     const found = [];
     let changed = false;
-    for (const announced of parseAnnouncements(results)) {
-      let { identity, changed: updated } = await this.probe(announced.ip);
-      if (!identity && announced.kind === 'button') {
+    for (const { device, address, identity: probed, changed: updated } of answers) {
+      let identity = probed;
+      let moved = updated;
+      if (!identity && device.kind === 'button') {
         // Asleep again already: the announcement says enough to wait for its presses.
-        identity = { ...announced, firmware: '', name: '' };
-        updated = this.remember(identity, announced.ip);
+        identity = { ...device, firmware: '', name: '' };
+        moved = this.remember(identity, address);
       }
-      changed ||= Boolean(updated);
+      changed ||= Boolean(moved);
       if (identity) {
-        found.push({ ...identity, address: announced.ip });
+        found.push({ ...identity, address });
       }
     }
     if (changed) {
       await this.publishDevices();
-      await this.startReceiver().catch(() => {});
+      await this.startReceiver();
     }
     return found;
   }
@@ -666,21 +833,24 @@ export class MyStromApp {
 
   /** Writes the action URLs of every known button that is awake. */
   async setupButtons() {
+    if (this.config.gladysHostError) {
+      return T.setup.badGladysAddress;
+    }
     if (!this.config.gladysHost) {
       return T.setup.noGladysAddress;
     }
-    const buttons = this.records.filter((record) => record.kind === 'button');
+    const buttons = this.records.filter((record) => record.kind === 'button' && record.address);
     if (buttons.length === 0) {
       return T.setup.noButton;
     }
     let port;
     try {
-      await this.ensureReceiver();
+      const container = await this.ensureReceiver();
+      if (container?.status !== 'running') {
+        return T.setup.noPort(container?.status ?? 'not started');
+      }
       this.startChannel();
-      const containers = await this.gladys.getContainers();
-      port = containers
-        .find((container) => container.name === RECEIVER.name)
-        ?.ports?.find((p) => p.name === RECEIVER.httpPortName)?.host_port;
+      port = container.ports?.find((p) => p.name === RECEIVER.httpPortName)?.host_port;
     } catch (err) {
       return T.setup.noPort(err.message);
     }

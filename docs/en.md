@@ -31,7 +31,13 @@ that late. The energy index keeps growing when a switch restarts.
 
 If you secured the local API of your devices with a token in the myStrom app,
 type it in **API token**. One token for all the devices: devices secured with
-different tokens are not supported yet.
+different tokens are not supported yet. A device found by the search is first
+asked without the token: the token is only sent to a device that asks for it.
+
+The integration checks regularly that the device answering at an address is
+still the same one (its MAC address). If your router gives the address of a
+device to another one, the first is shown unreachable and searched again, and
+the status of the integration names both: give your devices fixed addresses.
 
 ## Buttons
 
@@ -52,8 +58,14 @@ screen).
    press. The press is in the `press` variable of the trigger.
 
 A button not reached (asleep) is named in the answer: plug it on USB and press
-the configuration button again. The action URLs contain a secret, so another
-machine of your network cannot fire your scenes by guessing them.
+the configuration button again.
+
+The action URLs contain a random secret, so another machine of your network
+cannot fire your scenes by guessing them. It is a limited protection: the
+buttons call Gladys in plain HTTP, so the secret can be seen by anyone
+listening on your network, and read back from a button by anyone who can reach
+its local API. It only starts scenes, it gives no access to Gladys. If you
+think it leaked, see "Troubleshooting".
 
 ## Good to know
 
@@ -71,6 +83,9 @@ machine of your network cannot fire your scenes by guessing them.
 - **Nothing found by the search**: some networks do not let Gladys hear the
   announcements, and buttons only announce themselves while awake. Type the
   addresses instead.
+- **The button secret leaked**: renewing it is not possible from the
+  configuration screen yet (planned). Meanwhile, remove the action URLs of the
+  button in the myStrom app.
 - **A button press does nothing**: check that the Gladys address is the one
   the buttons reach (not a VPN or Gladys Plus address), and set the action URLs
   again after changing it.

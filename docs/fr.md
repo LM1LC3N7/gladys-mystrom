@@ -34,7 +34,15 @@ prise redémarre.
 Si vous avez protégé l'API locale de vos appareils par un jeton dans
 l'application myStrom, saisissez-le dans **Jeton d'API**. Un seul jeton pour
 tous les appareils : des appareils protégés par des jetons différents ne sont
-pas encore pris en charge.
+pas encore pris en charge. Un appareil trouvé par la recherche est d'abord
+interrogé sans le jeton : le jeton n'est envoyé qu'à un appareil qui le
+demande.
+
+L'intégration vérifie régulièrement que l'appareil qui répond à une adresse
+est toujours le même (son adresse MAC). Si votre box donne l'adresse d'un
+appareil à un autre, le premier est affiché injoignable et recherché à
+nouveau, et l'état de l'intégration nomme les deux : donnez des adresses fixes
+à vos appareils.
 
 ## Boutons
 
@@ -58,8 +66,14 @@ machine Gladys (affiché dans l'écran de configuration).
    bouton et l'appui. L'appui est dans la variable `press` du déclencheur.
 
 Un bouton non joint (endormi) est nommé dans la réponse : branchez-le en USB
-et relancez l'enregistrement. Les URL d'action contiennent un secret : une
-autre machine de votre réseau ne peut pas lancer vos scènes en les devinant.
+et relancez l'enregistrement.
+
+Les URL d'action contiennent un secret aléatoire : une autre machine de votre
+réseau ne peut pas lancer vos scènes en les devinant. La protection est
+limitée : les boutons appellent Gladys en HTTP simple, donc le secret est
+visible par qui écoute votre réseau, et relisible sur un bouton par qui joint
+son API locale. Il ne fait que lancer des scènes, il ne donne aucun accès à
+Gladys. Si vous pensez qu'il a fuité, voyez « Dépannage ».
 
 ## Bon à savoir
 
@@ -77,6 +91,9 @@ autre machine de votre réseau ne peut pas lancer vos scènes en les devinant.
 - **La recherche ne trouve rien** : certains réseaux ne laissent pas Gladys
   entendre les annonces, et les boutons ne s'annoncent qu'éveillés. Saisissez
   plutôt les adresses.
+- **Le secret des boutons a fuité** : le renouveler n'est pas encore possible
+  depuis l'écran de configuration (prévu). En attendant, retirez les URL
+  d'action du bouton dans l'application myStrom.
 - **Un appui ne fait rien** : vérifiez que l'adresse de Gladys est bien celle
   que les boutons joignent (pas une adresse VPN ni Gladys Plus), et
   réenregistrez les URL d'action après l'avoir changée.

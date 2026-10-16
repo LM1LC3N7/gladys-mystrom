@@ -24,8 +24,13 @@ the notes of the version's GitHub Release.
   trigger (single, double, long press, touch), through a receiver
   sub-container whose action URLs the "Set the button action URLs" button
   writes into the buttons.
-- An optional API token for devices secured in the myStrom app.
+- An optional API token for devices secured in the myStrom app, sent to a
+  device found by the search only if it asks for it.
+- The device answering at an address is checked to still be the same one: a
+  device whose address went to another one is shown unreachable, searched
+  again, and named in the status.
 - Reachability on the transport badge, states within the Gladys rate limit,
-  measurements spaced by a minute.
+  measurements spaced by a minute, the switches, lights, motion and presses
+  first.
 
 [Unreleased]: https://github.com/LM1LC3N7/gladys-mystrom/commits/main

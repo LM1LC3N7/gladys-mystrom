@@ -8,7 +8,8 @@ import assert from 'node:assert/strict';
 import { createFakeGladys } from '@gladysassistant/integration-sdk/testing';
 import { normalizeConfig, parseAddresses, parseHost } from '../src/config.js';
 import { nextEnergy } from '../src/energy.js';
-import { buildDevice, featureKeys, readValues, switchCaps } from '../src/model.js';
+import { buildDevice, featureKeys, mergeCaps, readValues, switchCaps } from '../src/model.js';
+import { StatePublisher } from '../src/publisher.js';
 import { deviceType, parseAnnouncements, parseInfo } from '../src/mystrom/info.js';
 import {
   hsvToRgb,
@@ -208,4 +209,76 @@ test('Gladys values of lights, motion sensors and buttons', () => {
   assert.equal(feature.category, 'button');
   assert.equal(feature.read_only, true);
   assert.equal(feature.has_feedback, false);
+});
+
+test('energy: a restart is a new boot_id or an uptime going back, numeric ids too', () => {
+  const first = nextEnergy(undefined, {
+    boot_id: 7,
+    energy_since_boot: 3_600_000,
+    time_since_boot: 100,
+  });
+  assert.equal(first.counter.bootId, '7');
+  const same = nextEnergy(first.counter, {
+    boot_id: 7,
+    energy_since_boot: 7_200_000,
+    time_since_boot: 200,
+  });
+  assert.equal(same.kwh, 2);
+  const rebooted = nextEnergy(same.counter, {
+    boot_id: 7,
+    energy_since_boot: 360_000,
+    time_since_boot: 5,
+  });
+  assert.equal(rebooted.kwh, 2.1, 'same id, uptime back: a restart');
+  const glitch = nextEnergy(rebooted.counter, {
+    boot_id: 7,
+    energy_since_boot: 0,
+    time_since_boot: 6,
+  });
+  assert.equal(glitch.kwh, 2.1, 'same start, counter lower: never goes back');
+  assert.equal(nextEnergy(undefined, { boot_id: '', energy_since_boot: 1 }), undefined);
+  assert.equal(switchCaps({ energy_since_boot: 1, boot_id: 0 }).energy, true, 'numeric boot_id');
+});
+
+test('switch capabilities only grow', () => {
+  const full = switchCaps(SWITCH_REPORT);
+  assert.deepEqual(mergeCaps(full, switchCaps({ relay: true })), full);
+  assert.deepEqual(mergeCaps(undefined, switchCaps(SWITCH_V1_REPORT)), {
+    power: true,
+    temperature: false,
+    energy: false,
+  });
+});
+
+test('the temperature of a switch is a device temperature, the motion sensor one a room one', () => {
+  const gladys = createFakeGladys();
+  const sw = buildDevice(gladys, {
+    mac: '64002D010203',
+    kind: 'switch',
+    model: 'Switch EU',
+    caps: switchCaps(SWITCH_REPORT),
+  });
+  const pir = buildDevice(gladys, { mac: '083A8D0A0B0C', kind: 'pir', model: 'Motion Sensor' });
+  const temperature = (device) =>
+    device.features.find((f) => f.external_id.endsWith(':temperature'));
+  assert.equal(temperature(sw).category, 'device-temperature-sensor');
+  assert.equal(temperature(pir).category, 'temperature-sensor');
+});
+
+test('publisher: relays, motion and presses go first when the budget is short', async () => {
+  const sent = [];
+  const gladys = {
+    publishChangedStates: async (batch) => {
+      sent.push(...batch.map((s) => s.device_feature_external_id));
+      return { count: batch.length };
+    },
+    forgetPublishedStates: () => {},
+  };
+  const publisher = new StatePublisher({ gladys, budget: 2, timers: globalThis });
+  publisher.configure({ throttled: new Set(['a:power', 'b:power']), events: new Set() });
+  publisher.push('a:power', { state: 1 });
+  publisher.push('b:power', { state: 2 });
+  publisher.push('a:switch', { state: 1 });
+  await publisher.flush();
+  assert.deepEqual(sent, ['a:switch', 'a:power']);
 });

@@ -8,8 +8,125 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { request } from 'node:http';
-import { ChannelClient } from '../src/channel.js';
+import { createConnection, createServer } from 'node:net';
+import { ChannelClient, createChannelServer, proof } from '../src/channel.js';
 import { parsePress, startButtonService } from '../src/buttons/service.js';
+
+/** Reads JSON lines from a socket. */
+function lines(socket) {
+  const received = [];
+  let buffer = '';
+  socket.setEncoding('utf8');
+  socket.on('data', (chunk) => {
+    buffer += chunk;
+    let end;
+    while ((end = buffer.indexOf('\n')) >= 0) {
+      received.push(JSON.parse(buffer.slice(0, end)));
+      buffer = buffer.slice(end + 1);
+    }
+  });
+  return received;
+}
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+test('channel handshake: the secret never goes on the wire, both sides prove it', async (t) => {
+  const server = createChannelServer({ port: 0, host: '127.0.0.1', token: 'channel-secret' });
+  await server.start();
+  t.after(() => server.stop());
+  server.send({ type: 'press', mac: '5CCF7F02D676', press: 'single' });
+  const socket = createConnection({ host: '127.0.0.1', port: server.port });
+  t.after(() => socket.destroy());
+  const received = lines(socket);
+  await once(socket, 'connect');
+  while (received.length === 0) await wait(5);
+  const [challenge] = received;
+  assert.equal(challenge.type, 'challenge');
+  assert.match(challenge.nonce, /^[0-9a-f]{32}$/);
+  const clientNonce = 'a'.repeat(32);
+  socket.write(
+    `${JSON.stringify({
+      type: 'hello',
+      nonce: clientNonce,
+      proof: proof('channel-secret', 'client', challenge.nonce, clientNonce),
+    })}\n`,
+  );
+  while (received.length < 3) await wait(5);
+  assert.equal(received[1].type, 'ready');
+  assert.equal(received[1].proof, proof('channel-secret', 'server', clientNonce, challenge.nonce));
+  assert.equal(received[2].type, 'press', 'the queue only after the handshake');
+  assert.ok(!JSON.stringify(received).includes('channel-secret'));
+});
+
+test('channel: a replayed or forged hello is refused, nothing is sent to it', async (t) => {
+  const server = createChannelServer({ port: 0, host: '127.0.0.1', token: 'channel-secret' });
+  await server.start();
+  t.after(() => server.stop());
+  server.send({ type: 'press', mac: '5CCF7F02D676', press: 'single' });
+  const socket = createConnection({ host: '127.0.0.1', port: server.port });
+  t.after(() => socket.destroy());
+  const received = lines(socket);
+  await once(socket, 'connect');
+  while (received.length === 0) await wait(5);
+  // A proof computed for another challenge (a recorded exchange).
+  socket.write(
+    `${JSON.stringify({
+      type: 'hello',
+      nonce: 'b'.repeat(32),
+      proof: proof('channel-secret', 'client', 'c'.repeat(32), 'b'.repeat(32)),
+    })}\n`,
+  );
+  await once(socket, 'close');
+  assert.deepEqual(
+    received.map((m) => m.type),
+    ['challenge'],
+  );
+  assert.equal(server.connected, false);
+});
+
+test('channel client: nothing accepted from a receiver that cannot prove the secret', async (t) => {
+  // An impostor on the private network: it challenges, then sends a ready
+  // without the right proof, and a press.
+  const impostor = createServer((socket) => {
+    socket.write(`${JSON.stringify({ type: 'challenge', nonce: 'd'.repeat(32) })}\n`);
+    socket.once('data', () => {
+      socket.write(`${JSON.stringify({ type: 'ready', proof: 'nope' })}\n`);
+      socket.write(`${JSON.stringify({ type: 'press', mac: '5CCF7F02D676', press: 'long' })}\n`);
+    });
+  });
+  await new Promise((resolve) => impostor.listen(0, '127.0.0.1', resolve));
+  t.after(() => impostor.close());
+  const client = new ChannelClient({
+    host: '127.0.0.1',
+    port: impostor.address().port,
+    token: 'channel-secret',
+    delays: [10_000],
+  });
+  t.after(() => client.stop());
+  const events = [];
+  client.on('up', () => events.push('up'));
+  client.on('message', (message) => events.push(message.type));
+  client.start();
+  await wait(200);
+  assert.deepEqual(events, []);
+  // And a press sent before any ready is not accepted either.
+  const early = createServer((socket) => {
+    socket.write(`${JSON.stringify({ type: 'press', mac: '5CCF7F02D676', press: 'long' })}\n`);
+  });
+  await new Promise((resolve) => early.listen(0, '127.0.0.1', resolve));
+  t.after(() => early.close());
+  const second = new ChannelClient({
+    host: '127.0.0.1',
+    port: early.address().port,
+    token: 'channel-secret',
+    delays: [10_000],
+  });
+  t.after(() => second.stop());
+  second.on('message', (message) => events.push(message.type));
+  second.start();
+  await wait(200);
+  assert.deepEqual(events, []);
+});
 
 const TOKEN = 'abcdefghijklmnopqrstuvwxyz012345';
 

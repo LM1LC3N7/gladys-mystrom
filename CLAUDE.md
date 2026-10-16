@@ -5,19 +5,22 @@ contributors.
 
 ## What this is
 
-A Gladys Assistant **external integration**: a Node.js service (Node 22+, ESM,
-no build step) that runs in its own sandboxed Docker container and talks to
-Gladys through
+A Gladys Assistant **external integration** for myStrom Wi-Fi devices (local
+REST API, no cloud): a Node.js service (Node 22+, ESM, no build step) that runs
+in its own sandboxed Docker container and talks to Gladys through
 [`@gladysassistant/integration-sdk`](https://github.com/GladysAssistant/integration-sdk-js),
 its only runtime dependency. It started from the official JavaScript template.
+The same image also runs the `mystrom-buttons` sub-container (button action
+URLs). See `TODO.md` for the status and the decisions.
 
 ## Commands
 
 ```bash
 npm install
 npm test                                  # node --test, the built-in runner
-node --test test/devices.test.js          # one file
-node --test --test-name-pattern "plug"    # tests whose name matches
+node --test test/app.test.js              # one file
+node --test --test-name-pattern "bulb"    # tests whose name matches
+npm run cover                             # regenerate cover.png (800×534)
 npm run lint                              # ESLint
 npm run format:check                      # Prettier, as the CI runs it
 npm run format                            # Prettier, fix in place
@@ -31,16 +34,24 @@ pushing.
 ## Architecture
 
 ```
-index.js                          SDK wiring only: handlers registered before connect()
-src/devices/index.js              registry of the device blueprints + dispatch helpers
-src/devices/<type>.js             one device type per file (buildDevice, onPoll, onSetValue...)
-src/scenes.js                     scene action handlers (manifest `scene_actions`)
-src/widgets.js                    dashboard widget handlers (manifest `widgets`)
+index.js                          SDK wiring only: src/handlers.js registered before connect()
+src/handlers.js                   the SDK handlers -> MyStromApp (shared with the tests)
+src/app.js                        MyStromApp: known devices, polling, commands, buttons, actions
+src/mystrom/client.js             HTTP client of the device API (form bodies, Token header)
+src/mystrom/info.js               /api/v1/info and UDP 7979 announcements -> identity (pure)
+src/mystrom/light.js              hsv / mono / rgb colours <-> Gladys (pure)
+src/model.js                      known devices -> Gladys devices and values (pure)
+src/energy.js                     growing kWh index across switch restarts (pure)
+src/publisher.js                  states within the rate limit (250/min), measures spaced
+src/store.js                      /data/mystrom.json (known devices, energy, secrets)
+src/channel.js                    private TCP channel, mutual HMAC challenge-response
+src/receiver.js, src/buttons/     the mystrom-buttons sub-container (HTTP press URLs)
 src/config.js                     DEFAULT_CONFIG (mirrors the manifest defaults) + normalization
-src/weather.js                    example driver (Open-Meteo)
+src/constants.js, src/i18n.js     frozen keys, limits, timings; texts in English and French
+scripts/cover.mjs                 cover.png generator (plain Node)
 gladys-assistant-integration.json manifest: name, config_schema, actions, image...
 docs/en.md, docs/fr.md            user documentation, re-hosted by Gladys (mandatory)
-test/                             node --test, against the SDK's fake Gladys (integration-sdk/testing)
+test/                             node --test, against the SDK's fake Gladys and a fake fetch
 .github/scripts/release.mjs       release helpers (manifest bump, changelog), tested in test/
 ```
 
@@ -73,4 +84,9 @@ test/                             node --test, against the SDK's fake Gladys (in
 - **User-facing text** is bilingual (English and French): action messages,
   manifest texts, and `docs/en.md` / `docs/fr.md`, kept in sync.
 - **Style.** Prettier formats, ESLint catches mistakes. Comments explain why,
-  in English. Tests never touch the network.
+  in English. Tests never touch the network (loopback only, for the receiver).
+- **Encoding.** Every file is UTF-8 without BOM; `test/encoding.test.js`
+  refuses mojibake ("Ã©" for "é") in the manifest and the docs.
+- **Devices.** Never trust an address alone: the MAC answering there is
+  checked (`/api/v1/info`) before reading or commanding a device again, and a
+  device state is only read from the entry of its own MAC.

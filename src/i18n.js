@@ -13,13 +13,17 @@ export const KIND_LABELS = {
   pir: both('Motion sensor', 'Détecteur de mouvement'),
 };
 
-/** Joins the lines of each language. */
-export const lines = (list) => ({
-  en: list.map((line) => line.en).join('\n'),
-  fr: list.map((line) => line.fr).join('\n'),
-});
-
 export const T = {
+  sameAddress: (address, previous, next) =>
+    both(
+      `Two devices at ${address}: ${previous} was known there, ${next} answers now. Give each device a fixed address in your router.`,
+      `Deux appareils à l'adresse ${address} : ${previous} y était connu, ${next} y répond maintenant. Donnez une adresse fixe à chaque appareil dans votre box.`,
+    ),
+  lost: (macs) =>
+    both(
+      `No longer at their address, searched again: ${macs.join(', ')}.`,
+      `Plus à leur adresse, recherchés à nouveau : ${macs.join(', ')}.`,
+    ),
   noDevice: both(
     'No myStrom device yet: type their IP addresses in the configuration, or use "Find the myStrom devices".',
     'Aucun appareil myStrom pour le moment : saisissez leurs adresses IP dans la configuration, ou utilisez « Chercher les appareils myStrom ».',
@@ -68,6 +72,10 @@ export const T = {
       ),
   },
   setup: {
+    badGladysAddress: both(
+      'The "Address of Gladys for the buttons" is not a valid IP address (no port, no URL): correct it and save.',
+      "L'« Adresse de Gladys pour les boutons » n'est pas une adresse IP valide (sans port ni URL) : corrigez-la et enregistrez.",
+    ),
     noGladysAddress: both(
       'Type first the IP address of the Gladys machine in "Address of Gladys for the buttons", and save.',
       "Saisissez d'abord l'adresse IP de la machine Gladys dans « Adresse de Gladys pour les boutons », puis enregistrez.",
@@ -79,7 +87,7 @@ export const T = {
     noPort: (reason) =>
       both(
         `The button receiver is not running yet (${reason}). Try again in a minute.`,
-        `Le récepteur des boutons ne tourne pas encore (${reason}). Réessayez dans une minute.`,
+        `Le récepteur des boutons n'est pas encore démarré (${reason}). Réessayez dans une minute.`,
       ),
     result: (done, failed) =>
       both(

@@ -81,6 +81,8 @@ export const announcement = (mac, type, ip, flags = 0x06) => ({
 /**
  * A fake network of myStrom devices behind `fetch`: address -> route table.
  * Every request is recorded; an address absent from the table does not answer.
+ * A device with a `token` refuses the requests without it with a 404, as the
+ * secured firmware does (python-mystrom reads a 404 so), or `tokenStatus`.
  */
 export function fakeFetch(devices) {
   const calls = [];
@@ -92,7 +94,7 @@ export function fakeFetch(devices) {
       throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'EHOSTUNREACH' } });
     }
     if (device.token && options.headers?.Token !== device.token) {
-      return new Response('Unauthorized', { status: 401 });
+      return new Response('Not found', { status: device.tokenStatus ?? 404 });
     }
     const handler = device.routes[`${options.method ?? 'GET'} ${pathname}`];
     if (!handler) {

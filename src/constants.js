@@ -84,8 +84,12 @@ export const TIMINGS = {
   measureInterval: 60_000,
   /** An unchanged value is re-sent this often, so it stays recently dated in Gladys. */
   stateHeartbeat: 30 * 60_000,
-  /** An address that never answered is tried again this often. */
+  /** An address that never answered is tried again this often (and a lost device searched). */
   probeRetry: 60_000,
+  /** The MAC answering at a known address is checked again this often (DHCP may reassign it). */
+  verifyInterval: 10 * 60_000,
+  /** Devices asked at once after a search. */
+  probeConcurrency: 8,
   /** UDP announcement capture (seconds, 1-30): devices announce every ~5 s. */
   scanSeconds: 7,
   /** Saving /data waits this long for more changes. */

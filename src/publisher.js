@@ -89,7 +89,12 @@ export class StatePublisher {
       return 0;
     }
     const batch = [];
-    for (const [featureId, value] of this.pending) {
+    // Relays, lights, motion and presses first: when the budget runs out, the
+    // measurements wait for the next round, never the other way round.
+    const ordered = [...this.pending].sort(
+      ([a], [b]) => Number(this.throttled.has(a)) - Number(this.throttled.has(b)),
+    );
+    for (const [featureId, value] of ordered) {
       if (room <= 0) {
         break;
       }

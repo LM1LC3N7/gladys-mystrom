@@ -220,8 +220,19 @@ test('bulb commands: on/off, brightness, colour, white, as form data', async (t)
     { action: 'on', color: '18;30' },
     { action: 'off' },
   ]);
-  const post = net.calls.find((c) => c.method === 'POST');
-  assert.equal(post.headers['Content-Type'], 'application/x-www-form-urlencoded');
+  const posts = net.calls.filter((c) => c.method === 'POST');
+  assert.equal(posts[0].headers['Content-Type'], 'application/x-www-form-urlencoded');
+  assert.deepEqual(
+    posts.map((c) => c.body),
+    [
+      'action=off',
+      'action=on&color=191;90;60',
+      'action=on&color=120;100;60',
+      'action=on&color=18;60',
+      'action=on&color=18;30',
+      'action=off',
+    ],
+  );
   await app.publisher.flush();
   assert.equal(gladys.fake.lastState(feature('white').external_id), monoToMireds(18));
   assert.equal(gladys.fake.lastState(feature('light').external_id), 0);
@@ -285,8 +296,9 @@ test('the energy index survives a restart of the integration and of the switch',
 });
 
 test('find the devices: UDP announcements, a sleeping button kept, the receiver started', async (t) => {
-  const { gladys, app, channels } = await setup(t, {
-    config: {},
+  const { gladys, app, channels, net } = await setup(t, {
+    config: { api_token: 'user-token' },
+    containers: [{ name: 'mystrom-buttons', status: 'running', ports: [] }],
     scanResults: {
       'udp-broadcast': [
         announcement('64002D010203', 107, '192.168.1.30'),
@@ -311,6 +323,88 @@ test('find the devices: UDP announcements, a sleeping button kept, the receiver 
   assert.equal(channels.length, 1);
   assert.equal(channels[0].options.host, 'mystrom-buttons');
   assert.equal(channels[0].started, true);
+  // A machine announcing itself is first asked without the token.
+  const first = net.calls.find((c) => c.host === '192.168.1.30');
+  assert.equal(first.headers.Token, undefined);
+});
+
+test('the channel opens only once Gladys shows the receiver running', async (t) => {
+  const { gladys, app, channels } = await setup(t, {
+    config: {},
+    containers: [],
+    scanResults: { 'udp-broadcast': [announcement(BUTTON_MAC, 104, '192.168.1.40')] },
+  });
+  await gladys.fake.action('find_devices');
+  assert.equal(gladys.fake.bodies('POST', '/container/mystrom-buttons/start').length, 1);
+  assert.equal(channels.length, 0, 'not running: no channel');
+  gladys.fake.containers = [{ name: 'mystrom-buttons', status: 'running', ports: [] }];
+  app.lastReceiverTry = -Infinity;
+  await app.tick();
+  assert.equal(channels.length, 1);
+});
+
+test('a secured device announcing itself gets the token only once it asks for it', async (t) => {
+  const net = network({ token: 'user-token' });
+  const { gladys } = await setup(t, {
+    net,
+    config: { api_token: 'user-token' },
+    scanResults: { 'udp-broadcast': [announcement('64002D010203', 107, '192.168.1.30')] },
+  });
+  await gladys.fake.action('find_devices');
+  const asks = net.calls.filter((c) => c.host === '192.168.1.30' && c.path === '/api/v1/info');
+  assert.deepEqual(
+    asks.map((c) => c.headers.Token),
+    [undefined, 'user-token'],
+  );
+  assert.equal(gladys.fake.discoveredDevices.length, 1);
+});
+
+test('another device at a known address: never polled as the old one, searched again', async (t) => {
+  const net = network();
+  const { gladys, app } = await setup(t, { net, config: { addresses: '192.168.1.30' } });
+  await createAll(gladys);
+  // DHCP gives the switch address to the motion sensor.
+  net.devices['192.168.1.30'] = net.devices['192.168.1.33'];
+  app.verified.clear();
+  const scansBefore = gladys.fake.scans.length;
+  const callsBefore = net.calls.length;
+  await app.poll();
+  await app.publishDevices();
+  app.updateStatus();
+  const sw = app.data.devices['64002D010203'];
+  assert.equal(sw.address, '', 'the switch is no longer at that address');
+  assert.equal(app.data.devices['083A8D0A0B0C'].address, '192.168.1.30');
+  assert.ok(gladys.fake.scans.length > scansBefore, 'a search was started');
+  assert.ok(
+    !net.calls.slice(callsBefore).some((c) => c.path === '/report'),
+    'no /report read from the other device',
+  );
+  assert.deepEqual(gladys.fake.transports.at(-1), {
+    device_external_id: id('64002D010203'),
+    transport: 'unreachable',
+  });
+  assert.match(
+    gladys.fake.connectionStatus.message.en,
+    /Two devices at 192\.168\.1\.30: 64002D010203 was known there, 083A8D0A0B0C answers now/,
+  );
+  const device = gladys.fake.discoveredDevices.find((d) => d.external_id === id('64002D010203'));
+  const relay = device.features.find((f) => f.external_id.endsWith(':switch'));
+  assert.equal((await gladys.fake.setValue(device, relay, 1)).success, false);
+});
+
+test('a command checks the device first when the check is old', async (t) => {
+  const net = network();
+  let time = 1_000_000;
+  const { gladys, app } = await setup(t, { net, config: { addresses: '192.168.1.30' } });
+  app.now = () => time;
+  await createAll(gladys);
+  const device = gladys.fake.discoveredDevices[0];
+  const relay = device.features.find((f) => f.external_id.endsWith(':switch'));
+  app.verified.set('64002D010203', time);
+  time += 11 * 60_000;
+  net.calls.length = 0;
+  await gladys.fake.setValue(device, relay, 0);
+  assert.deepEqual(net.calls.map((c) => c.path).slice(0, 2), ['/api/v1/info', '/relay?state=0']);
 });
 
 test('find the devices: an old Gladys without the scan', async (t) => {
@@ -362,7 +456,7 @@ async function withButtons(t, { config: extra, ...options } = {}) {
 }
 
 test('set the button action URLs: every press of every button points to the receiver', async (t) => {
-  const { gladys, app, buttonPosts } = await withButtons(t);
+  const { gladys, app, buttonPosts, net } = await withButtons(t);
   const ack = await gladys.fake.action('setup_buttons');
   assert.match(ack.data.message.en, /Action URLs set on: Button 5CCF7F02D676, Button Plus/);
   const base = `get://192.168.1.10:42115/press/${app.data.tokens.button}`;
@@ -385,6 +479,13 @@ test('set the button action URLs: every press of every button points to the rece
       },
     },
   ]);
+  // The exact body: the URL in clear, as the button firmware reads it.
+  const body = net.calls.find((c) => c.method === 'POST' && c.host === '192.168.1.40').body;
+  assert.equal(
+    body,
+    `single=${base}/${BUTTON_MAC}/single&double=${base}/${BUTTON_MAC}/double&long=${base}/${BUTTON_MAC}/long`,
+  );
+  assert.ok(body.startsWith('single=get://192.168.1.10:42115/press/'));
 });
 
 test('set the button action URLs: no Gladys address, no button, a button asleep', async (t) => {
@@ -392,6 +493,11 @@ test('set the button action URLs: no Gladys address, no button, a button asleep'
   assert.match(
     (await noAddress.gladys.fake.action('setup_buttons')).data.message.en,
     /IP address of the Gladys machine/,
+  );
+  const badAddress = await withButtons(t, { config: { gladys_address: 'http://x:80/' } });
+  assert.match(
+    (await badAddress.gladys.fake.action('setup_buttons')).data.message.fr,
+    /n'est pas une adresse IP valide/,
   );
   const noButton = await setup(t, { config: { gladys_address: '192.168.1.10' } });
   assert.match(
