@@ -1,67 +1,82 @@
-# Template de démonstration
+# myStrom
 
-Ceci est la documentation utilisateur de l'intégration. Gladys ré-héberge ce
-fichier et affiche un lien **Documentation** permanent vers lui dans l'écran
-de configuration (dans la langue de l'utilisateur, avec l'anglais en repli) —
-c'est au moment de configurer que l'utilisateur en a le plus besoin. Gardez
-les courtes indications d'accueil dans les blocs `section` du `config_schema`
-du manifest ; mettez ici le pas-à-pas détaillé (captures d'écran, dépannage…).
+Vos appareils Wi-Fi myStrom dans Gladys, sur votre réseau local, par l'API
+REST que les appareils servent eux-mêmes : pas de cloud myStrom, pas de compte.
+Intégration non officielle, sans lien avec myStrom AG.
 
 ## Ce que vous obtenez
 
-Six appareils de démonstration apparaissent après l'installation : une
-station météo (vraies données Open-Meteo), un interrupteur, une lampe
-variable, une prise connectée avec mesure de puissance, un détecteur de
-mouvement et une caméra.
+| Appareil                                    | Dans Gladys                                                                                                   |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Prise Switch (CH v1, CH v2, EU, Zero)       | Marche/arrêt, puissance (W), index d'énergie (kWh), température (°C), selon ce que le modèle mesure           |
+| Ampoule (Bulb)                              | Marche/arrêt, luminosité, couleur, température du blanc, puissance                                            |
+| Bande LED (LED Strip)                       | Marche/arrêt, luminosité, couleur, puissance                                                                  |
+| Button, Button Plus (1re et 2e génération)  | Une fonctionnalité bouton, et le déclencheur de scène **Bouton myStrom** (simple, double, long, effleurement) |
+| Détecteur de mouvement (Motion Sensor, PIR) | Mouvement, luminosité ambiante (lux), température                                                             |
 
-## Configuration
+Les prises, lampes et détecteurs sont lus toutes les 10 secondes (le réglage
+**Intervalle de rafraîchissement**, de 5 secondes à 5 minutes) : un mouvement
+est vu au plus avec ce retard. L'index d'énergie continue de croître quand une
+prise redémarre.
 
-1. Ouvrez l'onglet **Configuration** de l'intégration.
-2. Renseignez la **latitude** et la **longitude** que la station météo de
-   démonstration doit observer (Paris par défaut), et choisissez votre unité
-   de température. L'**intervalle de rafraîchissement** règle la fréquence
-   de lecture de la station météo et de la puissance de la prise : toutes
-   les 5 minutes par défaut, toutes les minutes au plus.
-3. Enregistrez : les appareils apparaissent dans l'onglet **Découverte**,
-   prêts à être ajoutés.
+## Mise en place
 
-Le réglage **Préférer la connexion locale** pilote la prise de
-démonstration : elle affiche en badge le canal réellement utilisé (local ou
-cloud), avec un point orange quand elle fonctionne en mode dégradé (local
-refusé, bascule cloud).
+1. Dans votre box, donnez une adresse IP fixe à chaque appareil myStrom (une
+   réservation DHCP) : l'intégration les joint par leur adresse.
+2. Dans Gladys, ouvrez l'onglet **Configuration** de l'intégration et
+   saisissez les adresses dans **Adresses IP des appareils**, séparées par des
+   virgules, par exemple `192.168.1.30, 192.168.1.31`. Ou utilisez **Chercher
+   les appareils myStrom** : les appareils s'annoncent sur le réseau toutes les
+   quelques secondes, et Gladys écoute pendant 7 secondes.
+3. Enregistrez. Les appareils apparaissent dans l'onglet **Découverte** :
+   ajoutez ceux que vous voulez.
 
-## Actions
+Si vous avez protégé l'API locale de vos appareils par un jeton dans
+l'application myStrom, saisissez-le dans **Jeton d'API**. Un seul jeton pour
+tous les appareils : des appareils protégés par des jetons différents ne sont
+pas encore pris en charge.
 
-- **Tester le fournisseur météo** — effectue une requête en direct vers
-  Open-Meteo et affiche la température et l'humidité actuelles sous le
-  bouton.
-- **Identifier un appareil** — choisissez un de vos appareils dans la liste
-  et il se signale (la lampe de démonstration « clignote » dans les logs).
+## Boutons
 
-## Scènes
+Un bouton myStrom dort entre deux appuis : Gladys ne peut rien lui demander.
+Quand on l'appuie, il appelle l'adresse qu'on lui a donnée (son « URL
+d'action »). L'intégration fait tourner un petit récepteur pour ces appels,
+dans un second conteneur que Gladys démarre et publie sur un port de la
+machine Gladys (affiché dans l'écran de configuration).
 
-L'intégration ajoute ses propres cartes à l'éditeur de scènes (Gladys 5.1
-ou plus récent), dans la catégorie **Intégrations** :
+1. Saisissez l'adresse IP de la machine Gladys sur votre réseau dans
+   **Adresse de Gladys pour les boutons** (par exemple `192.168.1.10`), et
+   enregistrez.
+2. Branchez chaque bouton en USB : il reste éveillé pendant la charge.
+   Faites-le connaître à Gladys (son adresse dans la liste, ou **Chercher les
+   appareils myStrom**).
+3. Utilisez **Enregistrer les URL d'action des boutons**. Les appuis simple,
+   double et long (et l'effleurement d'un Button Plus) de chaque bouton
+   éveillé appellent désormais Gladys. Cela remplace ce que l'application
+   myStrom avait réglé sur ces appuis.
+4. Dans une scène, utilisez le déclencheur **Bouton myStrom**, choisissez le
+   bouton et l'appui. L'appui est dans la variable `press` du déclencheur.
 
-- **Mouvement détecté** (déclencheur) — lance la scène quand un détecteur
-  de démonstration voit bouger quelque chose. Choisissez éventuellement le
-  détecteur et ce qui a bougé (personne, animal) ; laissés vides, toute
-  détection correspond. Les actions suivantes peuvent lire ce qui a bougé
-  avec `{{triggerEvent.data.target}}`.
-- **Identifier un appareil** (action) — fait se signaler l'appareil choisi.
-  Elle indique si l'appareil a pu se signaler, pour que les actions
-  suivantes puissent en dépendre.
+Un bouton non joint (endormi) est nommé dans la réponse : branchez-le en USB
+et relancez l'enregistrement. Les URL d'action contiennent un secret : une
+autre machine de votre réseau ne peut pas lancer vos scènes en les devinant.
 
-## Tableau de bord
+## Bon à savoir
 
-Ajoutez le widget **État de la démo** à un tableau de bord : il affiche en
-direct la température de la station météo et la puissance de la prise du
-bureau, la connexion utilisée par la prise (en orange si dégradée) et la
-position observée. Son bouton **Identifier la lampe** fait se signaler la
-lampe de démonstration.
+- Tout reste sur votre réseau : Gladys parle aux appareils en HTTP simple,
+  comme le fait l'API myStrom. Gardez votre Wi-Fi fermé aux inconnus.
+- La molette du Button Plus, les effets de l'ampoule (lever de soleil,
+  arc-en-ciel) et les réglages du détecteur ne sont pas gérés.
+- Les appareils joints par Gladys affichent un badge « local », « injoignable »
+  quand ils ne répondent plus.
 
 ## Dépannage
 
-L'intégration journalise tout ce qu'elle fait : consultez les logs de
-l'intégration depuis l'interface Gladys (ou `docker logs` sur l'hôte) avec
-`LOG_LEVEL=debug` pour le détail complet.
+- **« Jeton refusé »** : l'appareil a un jeton dans l'application myStrom ;
+  saisissez-le dans **Jeton d'API**.
+- **La recherche ne trouve rien** : certains réseaux ne laissent pas Gladys
+  entendre les annonces, et les boutons ne s'annoncent qu'éveillés. Saisissez
+  plutôt les adresses.
+- **Un appui ne fait rien** : vérifiez que l'adresse de Gladys est bien celle
+  que les boutons joignent (pas une adresse VPN ni Gladys Plus), et
+  réenregistrez les URL d'action après l'avoir changée.

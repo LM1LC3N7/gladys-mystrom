@@ -1,16 +1,20 @@
 {
-  "name": "gladys-integration-template-js",
-  "version": "1.0.0",
+  "name": "gladys-mystrom",
+  "version": "0.1.0",
   "private": true,
-  "description": "Official starter template to build an external integration for Gladys Assistant with the JavaScript SDK.",
+  "description": "Gladys Assistant external integration for myStrom Wi-Fi devices (switches, bulbs, LED strips, buttons, motion sensors), over their local REST API. Unofficial, not affiliated with myStrom.",
   "type": "module",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
+    "receiver": "node src/receiver.js",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "node --test"
+    "test": "node --test",
+    "audit": "npm audit --omit=dev",
+    "cover": "node scripts/cover.mjs",
+    "validate:manifest": "npx --yes github:GladysAssistant/integration-store ."
   },
   "engines": {
     "node": ">=22"

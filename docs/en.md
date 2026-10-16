@@ -1,61 +1,76 @@
-# Demo Devices Template
+# myStrom
 
-This is the user documentation of the integration. Gladys re-hosts this file
-and shows a permanent **Documentation** link to it in the Configuration screen
-(in the user's language, with English as the fallback) — it is when
-configuring that the user needs it most. Keep the short onboarding hints in
-the `section` blocks of the manifest `config_schema`; put the long
-step-by-step (screenshots, troubleshooting…) here.
+Your myStrom Wi-Fi devices in Gladys, on your local network, through the REST
+API the devices serve themselves: no myStrom cloud, no account. Unofficial
+integration, not affiliated with myStrom AG.
 
 ## What you get
 
-Six demo devices show up after installation: a weather station (real data
-from Open-Meteo), a switch, a dimmable light, a smart plug with power
-metering, a motion sensor and a camera.
+| Device                                | In Gladys                                                                                  |
+| ------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Switch (CH v1, CH v2, EU, Zero)       | On/off, power (W), energy index (kWh), temperature (°C), as far as the model measures them |
+| Bulb                                  | On/off, brightness, colour, white temperature, power                                       |
+| LED Strip                             | On/off, brightness, colour, power                                                          |
+| Button, Button Plus (1st and 2nd gen) | A button feature, and the **myStrom button** scene trigger (single, double, long, touch)   |
+| Motion Sensor (PIR)                   | Motion, light level (lux), temperature                                                     |
 
-## Configuration
+The switches, lights and motion sensors are read every 10 seconds (the
+**Refresh interval** setting, 5 seconds to 5 minutes): a motion is seen at most
+that late. The energy index keeps growing when a switch restarts.
 
-1. Open the **Configuration** tab of the integration.
-2. Set the **latitude** and **longitude** the demo weather station should
-   observe (they default to Paris), and pick your temperature unit.
-   The **refresh interval** sets how often the weather station and the
-   plug's power are read: every 5 minutes by default, every minute at most.
-3. Save: the devices appear in the **Discovery** tab, ready to be added.
+## Setup
 
-The **Prefer the local connection** toggle drives the demo plug: it reports
-the channel it actually uses as a badge (local or cloud), with an orange dot
-when it runs degraded (local refused, cloud fallback).
+1. In your router, give every myStrom device a fixed IP address (a DHCP
+   reservation): the integration reaches them by address.
+2. In Gladys, open the integration **Configuration** tab and type the
+   addresses in **IP addresses of the devices**, separated by commas, for
+   example `192.168.1.30, 192.168.1.31`. Or press **Find the myStrom
+   devices**: the devices announce themselves on the network every few
+   seconds, and Gladys listens for 7 seconds.
+3. Save. The devices appear in the **Discovery** tab: add the ones you want.
 
-## Actions
+If you secured the local API of your devices with a token in the myStrom app,
+type it in **API token**. One token for all the devices: devices secured with
+different tokens are not supported yet.
 
-- **Test the weather provider** — performs a live request to Open-Meteo and
-  shows the current temperature and humidity under the button.
-- **Identify a device** — pick one of your devices in the list and it will
-  signal itself (the demo light "blinks" in the logs).
+## Buttons
 
-## Scenes
+A myStrom button sleeps between presses: Gladys cannot ask it anything. When
+pressed, it calls the address it was given (its "action URL"). The integration
+runs a small receiver for these calls, in a second container that Gladys starts
+and publishes on a port of the Gladys machine (shown in the configuration
+screen).
 
-The integration adds its own cards to the scene editor (Gladys 5.1 or
-later), under the **Integrations** category:
+1. Type the IP address of the Gladys machine on your network in **Address of
+   Gladys for the buttons** (for example `192.168.1.10`), and save.
+2. Plug each button on USB: it stays awake while charging. Make it known to
+   Gladys (its address in the list, or **Find the myStrom devices**).
+3. Press **Set the button action URLs**. The single, double and long presses
+   (and the touch of a Button Plus) of every awake button now call Gladys. This
+   replaces what the myStrom app had set on these presses.
+4. In a scene, use the **myStrom button** trigger, pick the button and the
+   press. The press is in the `press` variable of the trigger.
 
-- **Motion detected** (trigger) — starts the scene when a demo motion sensor
-  sees something move. Optionally pick the sensor and what moved (person,
-  animal); left empty, any detection matches. The following actions can
-  read what moved with `{{triggerEvent.data.target}}`.
-- **Identify a device** (action) — makes the chosen device signal itself.
-  It returns whether the device could signal itself, so the following
-  actions can depend on it.
+A button not reached (asleep) is named in the answer: plug it on USB and press
+the configuration button again. The action URLs contain a secret, so another
+machine of your network cannot fire your scenes by guessing them.
 
-## Dashboard
+## Good to know
 
-Add the **Demo status** widget to a dashboard: it shows the live
-temperature of the weather station and the power of the office plug, the
-connection the plug currently uses (orange when degraded) and the observed
-location. Its **Identify the light** button makes the demo light signal
-itself.
+- Everything stays on your network: Gladys talks to the devices in plain HTTP,
+  as the myStrom API does. Keep your Wi-Fi closed to strangers.
+- The Button Plus wheel, the Bulb effects (sunrise, rainbow) and the motion
+  sensor settings are not handled.
+- The devices reached by Gladys show a "local" badge, an "unreachable" one when
+  they stop answering.
 
 ## Troubleshooting
 
-The integration logs everything it does: check the integration logs from the
-Gladys UI (or `docker logs` on the host) with `LOG_LEVEL=debug` for the full
-detail.
+- **"Token refused"**: the device has a token in the myStrom app; type it in
+  **API token**.
+- **Nothing found by the search**: some networks do not let Gladys hear the
+  announcements, and buttons only announce themselves while awake. Type the
+  addresses instead.
+- **A button press does nothing**: check that the Gladys address is the one
+  the buttons reach (not a VPN or Gladys Plus address), and set the action URLs
+  again after changing it.
