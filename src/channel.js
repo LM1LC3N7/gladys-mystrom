@@ -179,6 +179,7 @@ export class ChannelClient extends EventEmitter {
     token,
     logger,
     delays = [1000, 2000, 5000, 10_000, 30_000],
+    handshakeTimeout = 10_000,
   }) {
     super();
     this.host = host;
@@ -186,6 +187,7 @@ export class ChannelClient extends EventEmitter {
     this.secret = String(token ?? '');
     this.logger = logger;
     this.delays = delays;
+    this.handshakeTimeout = handshakeTimeout;
     this.attempt = 0;
     this.connected = false;
     this.stopped = true;
@@ -206,12 +208,27 @@ export class ChannelClient extends EventEmitter {
 
   connect() {
     if (this.stopped) return;
+    if (this.secret === '') {
+      // Without a secret no proof means anything: never connect.
+      this.logger?.error('Channel: no secret, not connecting to the receiver');
+      this.stopped = true;
+      return;
+    }
     const socket = createConnection({ host: this.host, port: this.port });
     this.socket = socket;
     socket.setKeepAlive(true, 30_000);
     let state = 'waiting';
     let clientNonce;
     let serverNonce;
+    // A receiver that stalls the handshake is dropped (and tried again later).
+    const handshake = setTimeout(() => {
+      if (state !== 'ready') {
+        this.logger?.debug('Channel: handshake timed out');
+        socket.destroy();
+      }
+    }, this.handshakeTimeout);
+    handshake.unref?.();
+    socket.on('close', () => clearTimeout(handshake));
     onJsonLines(socket, (object) => {
       if (state === 'waiting') {
         if (object?.type !== 'challenge' || !NONCE.test(String(object.nonce ?? ''))) {
@@ -241,6 +258,7 @@ export class ChannelClient extends EventEmitter {
           return;
         }
         state = 'ready';
+        clearTimeout(handshake);
         this.connected = true;
         this.attempt = 0;
         const { proof: _proof, ...info } = object;

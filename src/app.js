@@ -157,6 +157,7 @@ export class MyStromApp {
     return this.poll()
       .then((changed) => (changed ? this.publishDevices() : undefined))
       .then(() => {
+        this.searchLost();
         if (!this.channel && this.now() - this.lastReceiverTry >= TIMINGS.probeRetry) {
           return this.startReceiver();
         }
@@ -329,6 +330,14 @@ export class MyStromApp {
     this.discover()
       .then(() => this.updateStatus())
       .catch((err) => this.logger.debug(`Search failed: ${err.message}`));
+  }
+
+  /** While a polled device has no address, a search at most every 5 minutes. */
+  searchLost() {
+    const lost = this.records.some((record) => record.kind !== 'button' && !record.address);
+    if (lost && this.now() - this.lastSearch >= TIMINGS.lostSearch) {
+      this.requestSearch();
+    }
   }
 
   /** One polling round: the new addresses, then every known device. */

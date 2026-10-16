@@ -1,19 +1,24 @@
 // -----------------------------------------------------------------------------
-// The texts users read are UTF-8 without BOM, and never mojibake: "Ã©"
-// instead of "é" is what a file read in Latin-1 and saved in UTF-8 looks like.
+// The texts users and contributors read are UTF-8 without BOM, and never
+// mojibake: UTF-8 bytes read as Latin-1 / Windows-1252 and saved again ("é"
+// becoming "Ã" + "©", the apostrophe "’" becoming "â" + "€" + "™").
 // -----------------------------------------------------------------------------
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const MOJIBAKE = /[ÂÃ][\u0080-¿€]/;
+const MOJIBAKE = /[ÂÃ][\u0080-¿€]|â€/;
 const FILES = [
   'gladys-assistant-integration.json',
   'docs/en.md',
   'docs/fr.md',
   'README.md',
   'CHANGELOG.md',
+  'CLAUDE.md',
+  'TODO.md',
+  'THIRD_PARTY_NOTICES.md',
+  'SECURITY.md',
   'src/i18n.js',
 ];
 
@@ -29,7 +34,9 @@ for (const file of FILES) {
 }
 
 test('the mojibake pattern catches what it should', () => {
-  assert.match('FranÃ§ais', MOJIBAKE);
-  assert.match('Â«', MOJIBAKE);
-  assert.doesNotMatch('Français « Découverte » 800×534', MOJIBAKE);
+  assert.match('FranÃ§ais', MOJIBAKE, 'ç read as Latin-1');
+  assert.match('Â«', MOJIBAKE, '« read as Latin-1');
+  assert.match('lâ€™app', MOJIBAKE, '’ read as Windows-1252');
+  assert.match('finâ€¦', MOJIBAKE, '… read as Windows-1252');
+  assert.doesNotMatch('Français « Découverte » 800×534 — l’app…', MOJIBAKE);
 });

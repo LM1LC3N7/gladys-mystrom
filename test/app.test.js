@@ -392,6 +392,34 @@ test('another device at a known address: never polled as the old one, searched a
   assert.equal((await gladys.fake.setValue(device, relay, 1)).success, false);
 });
 
+test('a device without address is searched again, at most every 5 minutes', async (t) => {
+  const net = network();
+  let time = 10_000_000;
+  const { gladys, app } = await setup(t, { net, config: { addresses: '192.168.1.30' } });
+  app.now = () => time;
+  // Found by a search, not typed: only a new search can find it again.
+  app.config.addresses = [];
+  app.data.devices['64002D010203'].address = '';
+  app.lastSearch = time - 5 * 60_000;
+  const scans = () => gladys.fake.scans.length;
+  const before = scans();
+  await app.tick();
+  await app.discovering;
+  assert.equal(scans(), before + 1, 'searched');
+  time += 60_000;
+  await app.tick();
+  await app.discovering;
+  assert.equal(scans(), before + 1, 'not again within 5 minutes');
+  time += 4 * 60_000;
+  await app.tick();
+  await app.discovering;
+  assert.equal(scans(), before + 2, 'again after 5 minutes');
+  app.data.devices['64002D010203'].address = '192.168.1.30';
+  time += 10 * 60_000;
+  await app.tick();
+  assert.equal(scans(), before + 2, 'nothing lost, no search');
+});
+
 test('a command checks the device first when the check is old', async (t) => {
   const net = network();
   let time = 1_000_000;

@@ -227,3 +227,42 @@ test('the channel refuses a client without the right token', async (t) => {
   assert.equal(up, false);
   assert.equal(service.channel.connected, false);
 });
+
+test('channel client: a receiver stalling the handshake is dropped after the timeout', async (t) => {
+  let closed = 0;
+  const stalling = createServer((socket) => {
+    // Accepts the connection, never challenges.
+    socket.on('close', () => {
+      closed += 1;
+    });
+  });
+  await new Promise((resolve) => stalling.listen(0, '127.0.0.1', resolve));
+  t.after(() => stalling.close());
+  const client = new ChannelClient({
+    host: '127.0.0.1',
+    port: stalling.address().port,
+    token: 'channel-secret',
+    delays: [10_000],
+    handshakeTimeout: 50,
+  });
+  t.after(() => client.stop());
+  client.start();
+  await wait(300);
+  assert.equal(closed, 1, 'the stalled socket was destroyed');
+  assert.equal(client.connected, false);
+});
+
+test('channel client: no connection at all without a secret', async (t) => {
+  let connections = 0;
+  const server = createServer(() => {
+    connections += 1;
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const client = new ChannelClient({ host: '127.0.0.1', port: server.address().port, token: '' });
+  t.after(() => client.stop());
+  client.start();
+  await wait(100);
+  assert.equal(connections, 0);
+  assert.equal(client.socket, undefined);
+});

@@ -86,7 +86,9 @@ test/                             node --test, against the SDK's fake Gladys and
 - **Style.** Prettier formats, ESLint catches mistakes. Comments explain why,
   in English. Tests never touch the network (loopback only, for the receiver).
 - **Encoding.** Every file is UTF-8 without BOM; `test/encoding.test.js`
-  refuses mojibake ("Ã©" for "é") in the manifest and the docs.
+  refuses mojibake (UTF-8 text read as Latin-1 and saved again) in the
+  manifest, the docs and these files.
 - **Devices.** Never trust an address alone: the MAC answering there is
-  checked (`/api/v1/info`) before reading or commanding a device again, and a
-  device state is only read from the entry of its own MAC.
+  checked again (`/api/v1/info`) when the last check is old — the device came
+  back online, 10 minutes passed, or a command finds it older than that — and
+  a device state is only read from the entry of its own MAC.

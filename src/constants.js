@@ -88,6 +88,8 @@ export const TIMINGS = {
   probeRetry: 60_000,
   /** The MAC answering at a known address is checked again this often (DHCP may reassign it). */
   verifyInterval: 10 * 60_000,
+  /** A device that lost its address is searched again this often until found. */
+  lostSearch: 5 * 60_000,
   /** Devices asked at once after a search. */
   probeConcurrency: 8,
   /** UDP announcement capture (seconds, 1-30): devices announce every ~5 s. */
