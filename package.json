@@ -1,6 +1,6 @@
 {
   "name": "gladys-mystrom",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "description": "Gladys Assistant external integration for myStrom Wi-Fi devices (switches, bulbs, LED strips, buttons, motion sensors), over their local REST API. Unofficial, not affiliated with myStrom.",
   "type": "module",
