@@ -56,8 +56,29 @@ test('configuration: defaults and bounds', () => {
   assert.equal(normalizeConfig({ poll_interval: '9000' }).pollInterval, 300);
   assert.equal(normalizeConfig({ poll_interval: 'x' }).pollInterval, 10);
   assert.equal(normalizeConfig({ api_token: '  abc ' }).token, 'abc');
-  assert.equal(normalizeConfig({ gladys_address: '192.168.1.10' }).gladysHost, '192.168.1.10');
-  assert.equal(normalizeConfig({ gladys_address: '192.168.1.10:80' }).gladysHostError, true);
+  assert.equal(normalizeConfig({ callback_address: '192.168.1.10' }).gladysHost, '192.168.1.10');
+  assert.equal(normalizeConfig({ callback_address: '192.168.1.10:80' }).gladysHostError, true);
+});
+
+test('configuration: the Gladys address saved by 0.1.3 under GLADYS_ADDRESS still counts', () => {
+  // The core hands GLADYS_* keys back as is: that is where the old field went.
+  assert.equal(normalizeConfig({ GLADYS_ADDRESS: '192.168.1.10' }).gladysHost, '192.168.1.10');
+  assert.equal(
+    normalizeConfig({ callback_address: '', GLADYS_ADDRESS: '192.168.1.10' }).gladysHost,
+    '192.168.1.10',
+  );
+  assert.equal(
+    normalizeConfig({ callback_address: '  ', GLADYS_ADDRESS: '192.168.1.10' }).gladysHost,
+    '192.168.1.10',
+  );
+  // The new field, once set, wins over the old value.
+  assert.equal(
+    normalizeConfig({ callback_address: '192.168.1.20', GLADYS_ADDRESS: '192.168.1.10' })
+      .gladysHost,
+    '192.168.1.20',
+  );
+  assert.equal(normalizeConfig({ GLADYS_ADDRESS: 'http://x:80/' }).gladysHostError, true);
+  assert.equal(normalizeConfig({}).gladysHost, '');
 });
 
 test('device types: numbers, codes, unknown ones', () => {

@@ -468,7 +468,7 @@ async function withButtons(t, { config: extra, ...options } = {}) {
     net,
     config: {
       addresses: '192.168.1.40, 192.168.1.41',
-      gladys_address: '192.168.1.10',
+      callback_address: '192.168.1.10',
       ...extra,
     },
     containers: [
@@ -517,17 +517,17 @@ test('set the button action URLs: every press of every button points to the rece
 });
 
 test('set the button action URLs: no Gladys address, no button, a button asleep', async (t) => {
-  const noAddress = await withButtons(t, { config: { gladys_address: '' } });
+  const noAddress = await withButtons(t, { config: { callback_address: '' } });
   assert.match(
     (await noAddress.gladys.fake.action('setup_buttons')).data.message.en,
     /IP address of the Gladys machine/,
   );
-  const badAddress = await withButtons(t, { config: { gladys_address: 'http://x:80/' } });
+  const badAddress = await withButtons(t, { config: { callback_address: 'http://x:80/' } });
   assert.match(
     (await badAddress.gladys.fake.action('setup_buttons')).data.message.fr,
     /n'est pas une adresse IP valide/,
   );
-  const noButton = await setup(t, { config: { gladys_address: '192.168.1.10' } });
+  const noButton = await setup(t, { config: { callback_address: '192.168.1.10' } });
   assert.match(
     (await noButton.gladys.fake.action('setup_buttons')).data.message.fr,
     /Aucun bouton myStrom connu/,

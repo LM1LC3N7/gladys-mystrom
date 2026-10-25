@@ -10,6 +10,13 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+### Fixed
+
+- The "Address of Gladys for the buttons" field never reached the integration
+  (Gladys keeps the `GLADYS_*` config keys for itself): it is stored under a
+  new key, and an address saved with 0.1.3 is still read until the field is
+  saved again.
+
 ## [0.1.3] - 2026-10-23
 
 ## [0.1.2] - 2026-10-17

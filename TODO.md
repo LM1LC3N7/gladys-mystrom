@@ -108,6 +108,12 @@ up to date at the end of every milestone.
   LONG_CLICK (6), touch = PRESSED (60) (Gladys `BUTTON_STATUS`, no "touch").
 - The integration never writes the action URLs by itself: only the "Set the
   button action URLs" button does (it replaces the URLs set by the app).
+- Config key `callback_address` (0.1.4): the field shipped as `gladys_address`
+  in 0.1.3, and the core hands the `GLADYS_*` keys back untouched (reserved
+  namespace), so the value came back as `GLADYS_ADDRESS` and the code never
+  saw it. The manifest key is renamed, and `normalizeConfig` falls back to
+  `GLADYS_ADDRESS` while the new field is empty (the value 0.1.3 installations
+  already saved); `test/manifest.test.js` refuses any `gladys_`-prefixed key.
 - Lights: brightness 0 turns off; a colour command keeps the brightness; a
   brightness command keeps the hue (hsv) or the white (mono); white in mireds
   154–370 mapped onto the mono scale 1–18.

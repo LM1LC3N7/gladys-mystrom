@@ -9,8 +9,17 @@ import { LIMITS, POLL_INTERVAL } from './constants.js';
 export const DEFAULT_CONFIG = {
   addresses: '',
   poll_interval: POLL_INTERVAL.default,
-  gladys_address: '',
+  callback_address: '',
 };
+
+/**
+ * The key this field had up to 0.1.3. Gladys stores the config keys
+ * upper-cased and hands the GLADYS_* ones back as is (its reserved namespace),
+ * so `gladys_address` came back as `GLADYS_ADDRESS` and the field never
+ * reached the code. Installations of 0.1.3 still hold the value under that
+ * name: it is read as a fallback until the user saves the new field.
+ */
+export const LEGACY_CALLBACK_KEY = 'GLADYS_ADDRESS';
 
 const LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
 
@@ -84,7 +93,8 @@ export function normalizeConfig(raw = {}) {
   };
   const { valid, invalid } = parseAddresses(c.addresses);
   const interval = Number(c.poll_interval);
-  const gladys = parseHost(c.gladys_address);
+  // An empty new field falls back to the value saved under the old key.
+  const gladys = parseHost(text(c.callback_address) || c[LEGACY_CALLBACK_KEY]);
   return {
     addresses: valid,
     invalidAddresses: invalid,

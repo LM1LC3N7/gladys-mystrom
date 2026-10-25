@@ -104,7 +104,7 @@
       }
     },
     {
-      "key": "gladys_address",
+      "key": "callback_address",
       "type": "string",
       "label": {
         "en": "Address of Gladys for the buttons",

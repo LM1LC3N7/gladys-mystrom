@@ -108,6 +108,13 @@ test('the configuration matches the code', () => {
     assert.ok(field.key in DEFAULT_CONFIG, `${field.key} has no default in the code`);
   }
   assert.equal(fields.api_token.type, 'secret', 'the token is never sent back to the browser');
+  // Gladys stores the keys upper-cased and hands GLADYS_* back as is (reserved
+  // namespace): a "gladys_..." key would never reach the integration (0.1.3
+  // shipped `gladys_address` that way).
+  for (const key of Object.keys(fields)) {
+    assert.match(key, /^[a-z0-9_]+$/, key);
+    assert.ok(!key.toUpperCase().startsWith('GLADYS_'), `${key}: reserved prefix`);
+  }
   assert.deepEqual(
     [fields.poll_interval.min, fields.poll_interval.max],
     [POLL_INTERVAL.min, POLL_INTERVAL.max],
