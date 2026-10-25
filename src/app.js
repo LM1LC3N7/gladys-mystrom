@@ -8,7 +8,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { DEVICE_TRANSPORTS, createLogger } from '@gladysassistant/integration-sdk';
 import { ChannelClient } from './channel.js';
-import { normalizeConfig, urlHost } from './config.js';
+import { LEGACY_CALLBACK_KEY, normalizeConfig, urlHost } from './config.js';
 import { LIMITS, PRESS_VALUES, RECEIVER, SCENE_TRIGGERS, TIMINGS } from './constants.js';
 import { nextEnergy } from './energy.js';
 import { KIND_LABELS, T } from './i18n.js';
@@ -116,6 +116,7 @@ export class MyStromApp {
     }
     const previous = this.config;
     this.config = normalizeConfig(raw);
+    await this.migrateCallbackAddress(raw);
     if (previous.token !== this.config.token) {
       // Another token: the addresses that refused the previous one are asked again.
       this.probes.clear();
@@ -130,6 +131,25 @@ export class MyStromApp {
     this.schedule();
     await this.startReceiver();
     this.updateStatus();
+  }
+
+  /**
+   * One-time migration: the Gladys address that 0.1.3 saved under the old key
+   * (see LEGACY_CALLBACK_KEY) is copied into the new field, so it shows up in
+   * the configuration screen and can be cleared. Only while the new key was
+   * never saved: an empty field afterwards stays empty.
+   */
+  async migrateCallbackAddress(raw) {
+    const legacy = raw?.[LEGACY_CALLBACK_KEY];
+    if (raw?.callback_address !== undefined || typeof legacy !== 'string' || legacy.trim() === '') {
+      return;
+    }
+    try {
+      await this.gladys.setConfig({ callback_address: legacy });
+      this.logger.info('Gladys address for the buttons copied into the new configuration field');
+    } catch (err) {
+      this.logger.warn(`Could not copy the Gladys address into the new field: ${err.message}`);
+    }
   }
 
   stop() {

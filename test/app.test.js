@@ -516,6 +516,30 @@ test('set the button action URLs: every press of every button points to the rece
   assert.ok(body.startsWith('single=get://192.168.1.10:42115/press/'));
 });
 
+test('start: the Gladys address saved by 0.1.3 is copied once into the new field', async (t) => {
+  const legacy = await setup(t, { config: { GLADYS_ADDRESS: '192.168.1.10' } });
+  assert.deepEqual(legacy.gladys.fake.bodies('POST', '/config'), [
+    { config: { callback_address: '192.168.1.10' } },
+  ]);
+  assert.equal(legacy.gladys.fake.config.callback_address, '192.168.1.10');
+  assert.equal(legacy.app.config.gladysHost, '192.168.1.10');
+  assert.ok(legacy.logs.some((line) => line.startsWith('info ') && /copied into/.test(line)));
+  assert.ok(
+    legacy.logs.every((line) => !line.includes('192.168.1.10')),
+    'the value is not logged',
+  );
+  // The next start reads the migrated config: nothing to copy any more.
+  await legacy.app.start(await legacy.gladys.getConfig());
+  assert.equal(legacy.gladys.fake.bodies('POST', '/config').length, 1);
+
+  // The field cleared by the user: no fallback, nothing written.
+  const cleared = await setup(t, {
+    config: { callback_address: '', GLADYS_ADDRESS: '192.168.1.10' },
+  });
+  assert.equal(cleared.gladys.fake.bodies('POST', '/config').length, 0);
+  assert.equal(cleared.app.config.gladysHost, '');
+});
+
 test('set the button action URLs: no Gladys address, no button, a button asleep', async (t) => {
   const noAddress = await withButtons(t, { config: { callback_address: '' } });
   assert.match(

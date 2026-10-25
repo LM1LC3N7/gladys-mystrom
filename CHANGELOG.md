@@ -14,8 +14,8 @@ the notes of the version's GitHub Release.
 
 - The "Address of Gladys for the buttons" field never reached the integration
   (Gladys keeps the `GLADYS_*` config keys for itself): it is stored under a
-  new key, and an address saved with 0.1.3 is still read until the field is
-  saved again.
+  new key, and an address already typed with 0.1.3 is copied into the new
+  field automatically at the first start after the update.
 
 ## [0.1.3] - 2026-10-23
 

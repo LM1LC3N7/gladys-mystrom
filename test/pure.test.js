@@ -63,13 +63,14 @@ test('configuration: defaults and bounds', () => {
 test('configuration: the Gladys address saved by 0.1.3 under GLADYS_ADDRESS still counts', () => {
   // The core hands GLADYS_* keys back as is: that is where the old field went.
   assert.equal(normalizeConfig({ GLADYS_ADDRESS: '192.168.1.10' }).gladysHost, '192.168.1.10');
+  // Only while the new key was never saved: a cleared field stays empty.
   assert.equal(
     normalizeConfig({ callback_address: '', GLADYS_ADDRESS: '192.168.1.10' }).gladysHost,
-    '192.168.1.10',
+    '',
   );
   assert.equal(
     normalizeConfig({ callback_address: '  ', GLADYS_ADDRESS: '192.168.1.10' }).gladysHost,
-    '192.168.1.10',
+    '',
   );
   // The new field, once set, wins over the old value.
   assert.equal(

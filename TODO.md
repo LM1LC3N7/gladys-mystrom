@@ -111,9 +111,11 @@ up to date at the end of every milestone.
 - Config key `callback_address` (0.1.4): the field shipped as `gladys_address`
   in 0.1.3, and the core hands the `GLADYS_*` keys back untouched (reserved
   namespace), so the value came back as `GLADYS_ADDRESS` and the code never
-  saw it. The manifest key is renamed, and `normalizeConfig` falls back to
-  `GLADYS_ADDRESS` while the new field is empty (the value 0.1.3 installations
-  already saved); `test/manifest.test.js` refuses any `gladys_`-prefixed key.
+  saw it. The manifest key is renamed; `normalizeConfig` falls back to
+  `GLADYS_ADDRESS` only while the new key is absent (never saved), and
+  `start()` copies that value once into `callback_address` through
+  `setConfig` (visible and clearable in the UI; a cleared field stays empty);
+  `test/manifest.test.js` refuses any `gladys_`-prefixed key.
 - Lights: brightness 0 turns off; a colour command keeps the brightness; a
   brightness command keeps the hue (hsv) or the white (mono); white in mireds
   154–370 mapped onto the mono scale 1–18.

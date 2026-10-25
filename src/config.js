@@ -17,7 +17,8 @@ export const DEFAULT_CONFIG = {
  * upper-cased and hands the GLADYS_* ones back as is (its reserved namespace),
  * so `gladys_address` came back as `GLADYS_ADDRESS` and the field never
  * reached the code. Installations of 0.1.3 still hold the value under that
- * name: it is read as a fallback until the user saves the new field.
+ * name: `normalizeConfig` reads it while the new key is absent, and `start()`
+ * copies it once into the new key, so the user sees and can clear it.
  */
 export const LEGACY_CALLBACK_KEY = 'GLADYS_ADDRESS';
 
@@ -93,8 +94,11 @@ export function normalizeConfig(raw = {}) {
   };
   const { valid, invalid } = parseAddresses(c.addresses);
   const interval = Number(c.poll_interval);
-  // An empty new field falls back to the value saved under the old key.
-  const gladys = parseHost(text(c.callback_address) || c[LEGACY_CALLBACK_KEY]);
+  // The new key absent (never saved since the rename): the value saved under
+  // the old key. An empty string is the user clearing the field, kept empty.
+  const gladys = parseHost(
+    raw?.callback_address === undefined ? c[LEGACY_CALLBACK_KEY] : c.callback_address,
+  );
   return {
     addresses: valid,
     invalidAddresses: invalid,
